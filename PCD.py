@@ -9,14 +9,9 @@ Created on Wed Jun  9 11:40:11 2021
 import numpy as np # linear algebra
 from numpy import linalg as LA
 import math
+import random
 import matplotlib.pyplot as plt # Data Visualization 
-
 import pandas as pd # data processing
-dataset = pd.read_csv('./Mall_Customers.csv', index_col='CustomerID')
-dataset.drop_duplicates(inplace=True)
-X = dataset.iloc[:, [2, 3]].values # ndarray type (subset of data for testing purpose)
-
-plt.scatter(X[:,0], X[:,1], s = 50, c = 'pink', label = 'Original cluster')
 
 # Description Length of a cluster of data
     # DL = 20 + [ nPoints * log2 (sqrt (variance) ) ]
@@ -28,30 +23,42 @@ plt.scatter(X[:,0], X[:,1], s = 50, c = 'pink', label = 'Original cluster')
 def DL(distanceArr, start, end):
     numPoints = end - start # number of elements of the distanceArr
     variance = np.var(distanceArr)    
+    #print('hello', distanceArr)
+    #print('numPoints, variance', numPoints, variance)
     if (variance == 0): 
         return 20
+    elif (math.isnan(variance)):
+        return 0
     else:
         return 20 + numPoints * (math.log2(math.sqrt(variance))) ;
 
         
-def divide_cluster_DL(dataArr, distanceArr, chopped_clusters):
+def divide_cluster_DL(dataArr, distanceArr, data_mean, eigenvector_idx, chopped_clusters, data_plot, dl_plot, show_dl=False, show_hyperplane=False):
     temp_cluster1Dist = distanceArr.copy() 
     temp_cluster2Dist = []
     cut_point = 0
     current_position = 0
     minDL = DL(distanceArr, 0, len(distanceArr))
-    
+       
+    dl_arr = [minDL]
     for item in distanceArr:
         temp_cluster1Dist.remove(item) 
         temp_cluster2Dist.append(item)
         current_position = current_position + 1
-        newDL = DL(temp_cluster1Dist, current_position, len(distanceArr)) 
-        + DL(temp_cluster2Dist, 0, current_position) 
+    
+        newDL = (DL(temp_cluster1Dist, current_position, len(distanceArr)) 
+                 + DL(temp_cluster2Dist, 0, current_position))
         
+        dl_arr.append(newDL)
         if (newDL < minDL):
             minDL = newDL
             cut_point = current_position
     
+    if (show_dl):
+        dl_plot.plot(list(range(len(dl_arr))), dl_arr)
+        dl_plot.set_xlabel('Index')
+        dl_plot.set_ylabel('Description Length')
+
     # if no division, return the original data
     if (cut_point == 0): 
         chopped_clusters.append(dataArr.tolist())
@@ -63,97 +70,172 @@ def divide_cluster_DL(dataArr, distanceArr, chopped_clusters):
         cluster2 = dataArr[cut_point:]
         cluster1Dist = distanceArr[:cut_point]
         cluster2Dist = distanceArr[cut_point:]
-    
-        #print('CLUSTER 1: ', cluster1, '\n')
-        #print('CLUSTER 2: ', cluster2, '\n')
-        return divide_cluster_DL(cluster1, cluster1Dist, []) + divide_cluster_DL(cluster2, cluster2Dist, [])
-
-    
-def chop(data):
-    # S = a set of data points (array: each column represents a variable)
-    # S_mean = the mean of S
-    # S_CovMatrix = co-variance matrix of S
-    
-    # 1. Find the mean of dataset S, axis = 0 means along the column
-    data_mean = np.mean(data, axis = 0)
-    
-    # 2. Find Co-variance matrix of S
-    cov_matrix = np.cov(data, rowvar = False)
-    
-    # 3. Find the eigenvalues and eigenvectors of C
-    eigenvalues, eigenvectors = LA.eig(cov_matrix)
-    
-    # Plotting the eigenvectors
-    eig_vec1 = eigenvectors[:,0]
-    eig_vec2 = eigenvectors[:,1]    
-    plt.quiver(*data_mean, *eig_vec1, color=['r'], scale=10, label='eigenvector 1', alpha=0.5)
-    plt.quiver(*data_mean, *eig_vec2, color=['b'], scale=10, label='eigenvector 2' ,alpha=0.5)
-    
-    
-    # 4. Sort both eigenvalues and eigenvectors in the descending order of eigenvalue.
-    sorted_eig_index = np.argsort(eigenvalues)[::-1] # [::-1] = list[start : stop : step] = reverse a list
-    sorted_eigenvalue = eigenvalues[sorted_eig_index]
-    sorted_eigenvectors = eigenvectors[:, sorted_eig_index] # sorted column vectors
         
-    #print('original data: \n', data)
+        if (show_hyperplane):
+            if eigenvector_idx == 1:
+                y = data_mean[1] + distanceArr[cut_point]
+                x1 = 0
+                x2 = 50
+                data_plot.plot([x1, x2], [y, y])
+                
+            elif eigenvector_idx == 2:    
+                x = data_mean[0] + distanceArr[cut_point]
+                y1 = 0
+                y2 = 80
+                data_plot.plot([x, x], [y1, y2])
+            
+        return (divide_cluster_DL(cluster1, cluster1Dist, data_mean, eigenvector_idx, [], data_plot, dl_plot, show_dl, show_hyperplane) 
+                + divide_cluster_DL(cluster2, cluster2Dist, data_mean, eigenvector_idx ,[], data_plot, dl_plot, show_dl, show_hyperplane))
+ 
+def sorted_dist_list(data, mean, eigenvector):
+    # a) Get the distance from the mean (aka, hyperplane) to the origin
+    # The hyperplane starts at the mean
+    # origin = the starting point of eigenvectors, which is (0,0)
+    dist_hyperplane_origin = np.dot(mean.T, eigenvector) # m transpose • vi 
+
+    # b Compute the list of distance from point d to the mean (aka hyperplane)
+    dist_hyperplane_point = dist_hyperplane_origin - np.dot(data, eigenvector);
+        
+    # c) Sort distance_mean_point
+    sorted_index = np.argsort(dist_hyperplane_point)[::-1]
+    sorted_dist_hyperplane_point = dist_hyperplane_point[sorted_index]
+    sorted_data = data[sorted_index]
+    return [sorted_dist_hyperplane_point, sorted_data]
+        
+def chop(data, sorted_eigv, data_plot, dl_plot, show_hyperplane=False):
+    # For each eigenvector vi from the sorted list
+    input_data = data
     
-    # 5. For each eigenvector vi from the sorted list
-    for vec in sorted_eigenvectors.T:
-        # a) Establish the cutting hyper plane 
-        cutting_hyper_plane = np.dot(data_mean.T, vec) # m transpose • vi 
-
-        # b Compute the list of distance from point d to the cutting plane n
-        distance_from_plane = cutting_hyper_plane - np.dot(data, vec);
-
+    for i in range(0, len(sorted_eigv)):
+       
+        # enter the loop only if not eigenvector 1
+        if (isinstance(input_data[0][0], list)):
+            clusters = []
+            for idx in range(0, len(input_data)):     
+                nparray_data = np.array(input_data[idx])
+                mean = np.mean(nparray_data, axis = 0)
+                sorted_dist_and_data = sorted_dist_list(nparray_data, mean, sorted_eigv[i])
+                sorted_dist_hyperplane_point = sorted_dist_and_data[0]
+                sorted_data = sorted_dist_and_data[1]
+            
+                if (show_hyperplane and len(sorted_eigv) <= 2):
+                   if (i == 0):
+                       sub_clusters = divide_cluster_DL(sorted_data, sorted_dist_hyperplane_point.tolist(), mean, 1, [], data_plot, dl_plot, True, True)
+                   elif (i == 1):
+                       sub_clusters = divide_cluster_DL(sorted_data, sorted_dist_hyperplane_point.tolist(), mean, 2, [], data_plot, dl_plot, True, True)
+                else:
+                    sub_clusters = divide_cluster_DL(sorted_data, sorted_dist_hyperplane_point.tolist(), mean, 0, [], data_plot, dl_plot, True, False)
+                clusters = sub_clusters + clusters  
+                
+            input_data = clusters
+            print('The number of clusters divided by', sorted_eigv[i], len(clusters))
+         
+        else:
+            mean = np.mean(input_data, axis = 0)
+            sorted_dist_and_data = sorted_dist_list(input_data, mean, sorted_eigv[i])
+            sorted_dist_hyperplane_point = sorted_dist_and_data[0]
+            sorted_data = sorted_dist_and_data[1]
+            
+            # d) Start sliding the cutting hyper plane
+            # Plotting the hyperplane (only accept 2D or less)
+            if (show_hyperplane and len(sorted_eigv) <= 2):
+                if (i == 0):
+                    clusters = divide_cluster_DL(sorted_data, sorted_dist_hyperplane_point.tolist(), mean, 1, [], data_plot, dl_plot, True, True)
+                elif (i == 1):
+                    clusters = divide_cluster_DL(sorted_data, sorted_dist_hyperplane_point.tolist(), mean, 2, [], data_plot, dl_plot, True, True)
+               
+            else:
+                clusters = divide_cluster_DL(sorted_data, sorted_dist_hyperplane_point.tolist(), mean, 0, [], data_plot, dl_plot, True, False)
+                
+            input_data = clusters
+            print('The number of clusters divided by', sorted_eigv[i], len(clusters))
         
-        # c) Sort the points in order of distance from the cutting hyper plane
-        sorted_index = np.argsort(distance_from_plane)[::-1]
-        sorted_distance_from_plane = distance_from_plane[sorted_index]
-        sorted_data = data[sorted_index]
-      
-        
-        # d) Start sliding the cutting hyper plane
-        # print('DATA', sorted_distance_from_plane, '\n')
-        # sorted_distance_from_plane and sorted_data have the same length and index
-        clusters = divide_cluster_DL(sorted_data, sorted_distance_from_plane.tolist(), [])   
-        print()
-        print('eigenvector', vec, len(clusters))
-        #print('data points, sorted based on their distances to the hyper plane: ', sorted_data)
-        print('clusters', clusters)
-
+    return clusters
+    
 
 def merge_cluster_DL(clusters):
     # we will have (K Choose 2) pairs, where K is the number of clusters in C
     if type(clusters) is np.ndarray:
-        clusters = clusters.tolist()
-        result = clusters
+        result = clusters.tolist()
     else:
         result = clusters
-         
+        
     for i in range(len(clusters)):
         for x in range(i + 1, len(clusters)):
-            #print(clusters[i], clusters[x])
             temp_merge = [*clusters[i], *clusters[x]]
-            
-            if (DL(temp_merge) < (DL(clusters[i]) + DL(clusters[x]))):   
+            dl_add = DL(clusters[i], 0, len(clusters[i])) + DL(clusters[x], 0, len(clusters[x]))
+            dl_union = DL(temp_merge, 0, len(temp_merge))
+
+            if (dl_union < dl_add):
                 
                 #print('c1: ', clusters[i])
                 result = [item for item in result if item != clusters[i]]
-                #print('Result after deleting c1: ', result)
                   
                 #print('c2: ', clusters[x])
                 result = [item for item in result if item != clusters[x]]
-                #print('Result after deleting c2: ', result)
         
                 #print('temp_merge: ', temp_merge)
                 result.append(temp_merge)
-                #print('Final output: ', result)
-                
+               
                 return merge_cluster_DL(result)
-            
+    
     # If no merge happens
-    return clusters
-   
+    return result
+ 
+
+def main():        
+    dataset = pd.read_csv('./Mall_Customers.csv', index_col='CustomerID')
+    dataset.drop_duplicates(inplace=True)
+    data = dataset.iloc[:, [2, 3]].values # ndarray type, each column represents a variable
+
+    fig, (data_plot, dl_plot, clusters_plot) = plt.subplots(1, 3)
+    data_plot.set_title('Data set with normalized eigenvectors')
+    data_plot.set_xlabel('Age')
+    data_plot.set_ylabel('Annual Income')
+    data_plot.scatter(data[:,0], data[:,1], s = 20, c = 'pink')
+    
+    # 1. Find the mean of dataset S, axis = 0 means along the column
+    data_mean = np.mean(data, axis = 0)
+
+    # 2. Find Co-variance matrix of S
+    cov_matrix = np.cov(data, rowvar = False)
+    
+    # 3. Find the eigenvalues and eigenvectors of Co-variance matrix
+    eigenvalues, eigenvectors = LA.eig(cov_matrix)
+    
+    # 4. Sort eigenvectors in the descending order of eigenvalues.
+    sorted_eig_index = np.argsort(eigenvalues)[::-1] # [::-1] = list[start : stop : step] = reverse a list
+    sorted_eigenvectors = eigenvectors[:, sorted_eig_index] # sorted column vectors
+    sorted_eigenvectors_T = sorted_eigenvectors.T
+    
+    # Plotting the eigenvectors  
+    origin = [0, 0]
+    data_plot.plot(*data_mean, 'o', label='mean')
+    for i in range(0, len(sorted_eigenvectors_T)):
+        color = (random.random(), random.random(), random.random())       
+        data_plot.quiver(*origin, *(sorted_eigenvectors_T[i]), color=color, 
+                         label='eigenvector {}'.format(i), scale=5)
+     
+    
+    # 5. Chopping process
+    clusters = chop(data, sorted_eigenvectors_T, data_plot, dl_plot, False) 
+    final_clusters = merge_cluster_DL(clusters)
+
+    show_cluster = final_clusters
+    for i in range(len(show_cluster)):
+        color = np.array([random.random(), random.random(), random.random()]) 
+        color=color.reshape(1,-1)
+        cluster = np.array(show_cluster[i])
+        clusters_plot.scatter(cluster[:,0], cluster[:,1], s = 20, c=color)
+
+  
+    data_plot.legend()
+    
+    
+if __name__ == "__main__":
+    main()
+
+
 """
 Testing  
 # 1. Chop
