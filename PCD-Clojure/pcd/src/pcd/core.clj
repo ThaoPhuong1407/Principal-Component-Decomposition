@@ -87,23 +87,25 @@
 (defn description-length
   [distance-array]
   (let [num-elements (count distance-array)
-        variance (if (> num-elements 0) (matrix-stats/variance distance-array) Double/NaN)]
+        variance (cond
+                   (> num-elements 1) (matrix-stats/variance distance-array)
+                   (= num-elements 1) 0
+                   :else Double/NaN)]
     (cond
       (= variance 0) 20
       (Double/isNaN variance) 0
       :else (+ 20 (* num-elements (log2 (Math/sqrt variance)))))))
 
-
 ;;  RESULT IS NOT CORRECT, DO THIS!
 (defn divide-clusters-using-DL
   [data-and-dist-vector]
   (let [result-cut-point (loop
-                          [index 0
-                           temp1 data-and-dist-vector
+                          [temp1 data-and-dist-vector
                            temp2 []
                            minDL (description-length (into [] (map last data-and-dist-vector)))
                            cut-point 0
-                           dl-arr [minDL]]
+                           dl-arr [minDL]
+                           index 0]
 
                            (if (< index (count data-and-dist-vector))
 
@@ -115,23 +117,19 @@
                                    new-dl (+ (description-length dist-1) (description-length dist-2))
                                    cut-point-temp (if (< new-dl minDL) (+ 1 index) cut-point)]
 
-                               (recur (inc index)
-                                      data-and-dist-1
+                               (recur data-and-dist-1
                                       data-and-dist-2
                                       (if (< new-dl minDL) new-dl minDL)
                                       cut-point-temp
-                                      (conj dl-arr new-dl)))
+                                      (conj dl-arr new-dl)
+                                      (inc index)))
                              [cut-point, dl-arr]))]
-    ;; (println "dl-arr" (nth result-cut-point 1))
 
     (if (= (nth result-cut-point 0) 0)
-      (do
-        (println data-and-dist-vector)
-        data-and-dist-vector)
-
+      [(vec (map first data-and-dist-vector))] ;; return an vector of clusters 
       (let [sub-cluster1 (subvec data-and-dist-vector 0 (nth result-cut-point 0))
             sub-cluster2 (subvec data-and-dist-vector (nth result-cut-point 0))]
-        (conj (divide-clusters-using-DL sub-cluster1) (divide-clusters-using-DL sub-cluster2))))))
+        (concat (divide-clusters-using-DL sub-cluster1) (divide-clusters-using-DL sub-cluster2))))))
 
 
 (defn find-subcluster-from-data
@@ -144,14 +142,13 @@
 
     ;; b. Compute the list of distances from all points to the cutting plane
     dist-from-plane-to-points (get-dist-from-plane-to-points dist-from-plane-to-origin data eigenvector)
-    dist-from-plane-to-points-dict (zipmap ds-float dist-from-plane-to-points)
+    dist-from-plane-to-points-dict (zipmap data dist-from-plane-to-points)
 
     ;; c. Sort the points in order of distance from the cutting hyper plane (positive to negative)
     sorted-dist-from-plane-to-points (vec (sort-by val > dist-from-plane-to-points-dict))
     sub-clusters (divide-clusters-using-DL sorted-dist-from-plane-to-points)]
-    (println "eigenvector " eigenvector)
-    (println "sub-clusters " sub-clusters)
-    (println "sub-clusters length " (count sub-clusters))
+    ;; (println sub-clusters, (count sub-clusters))
+
     sub-clusters))
 
 (defn chop
@@ -166,32 +163,29 @@
         sub-clusters (if (= index-vec 0)
                        ;; 1st vector
                        (find-subcluster-from-data current-eigenvector data)
+
                        ;; remaining vectors 
                        (loop
                         [index-cluster 0
                          result []]
                          (if (< index-cluster (count clusters))
                            (let [curr-cluster (nth clusters index-cluster)
-                                 curr-data (if (= 2 (count (matrix/shape curr-cluster)))
-                                             (conj [] (first curr-cluster))
-                                             (into [] (vec (map first curr-cluster))))]
-                            ;;  (println curr-cluster)
+                                 #_curr-data #_(if (= 2 (count (matrix/shape curr-cluster))) #This is when we have [[point] distance]
+                                                   (conj [] (first curr-cluster))
+                                                   (into [] (vec (map first curr-cluster))))
+                                 sub-curr-clusters (find-subcluster-from-data current-eigenvector curr-cluster)]
+
                              (recur (inc index-cluster)
-                                    (into result (find-subcluster-from-data current-eigenvector curr-data))))
+                                    (into result sub-curr-clusters)))
                            result)))]
 
+        (println current-eigenvector, (count sub-clusters))
+        (println sub-clusters)
         (recur (inc index-vec)
                sub-clusters))
       clusters)))
 
-
-(def sub-clusters (find-subcluster-from-data (nth sorted-eigen-vectors 0) ds-float))
-
-;; (def clusters (chop sorted-eigen-vectors ds-float))
 ;; (def sub-clusters (divide-clusters-using-DL clusters))
-
-
-
 ;;    b. Get a list of distances of all points to the hyperplane
 
 ;;       (def dist_hyperplane_point (matrix-operator/- dist_hyperplane_origin (matrix-proto/vector-dot ds-float e-vec)))
