@@ -25,7 +25,7 @@ def DL(distanceArr):
     if (numPoints == 0):
         return 0  
 
-    variance = np.var(distanceArr, axis=0)   
+    variance = np.var(distanceArr)   
     if (variance == 0): 
         return 20
     elif (math.isnan(variance)):
@@ -64,7 +64,7 @@ def divide_cluster_DL(dataArr, distanceArr, eigenvector, chopped_clusters, data_
 
     # if no division, return the original data
     if (cut_point == 0): 
-        chopped_clusters.append(dataArr.tolist())
+        chopped_clusters.append([dataArr.tolist(), minDL])
         return chopped_clusters
     
     # else, divide the data into 2 clusters at the cut_point
@@ -141,8 +141,8 @@ def chop(data, sorted_eigv, data_plot, dl_plot, show_hyperplane=False):
             else:
                 clusters = divide_cluster_DL(sorted_data, sorted_dist_hyperplane_point.tolist(), sorted_eigv[i], [], data_plot, dl_plot, True, False)
 
-            input_data = clusters
-            print('The number of clusters', sorted_eigv[i], len(clusters))
+            input_data = [item[0] for item in clusters]
+            print('The number of clusters', sorted_eigv[i], len(input_data))
             
     return clusters
     
@@ -157,26 +157,43 @@ def merge_cluster_DL(clusters):
         
     for i in range(len(clusters)):
         for x in range(i + 1, len(clusters)):
-            temp_merge = [*clusters[i], *clusters[x]]
-            print("merge: ", temp_merge)
-            dl_add = DL(clusters[i]) + DL(clusters[x])
-            dl_union = DL(temp_merge)
+            a = [*clusters[i], *clusters[x]]
+            temp_merge = [*clusters[i][0], *clusters[x][0]]
+        
+            # Eigenvectors and eigenvalues of the temp_merge
+            U, s, VT = LA.svd(temp_merge) 
+            eigenvalues, eigenvectors_T = s, VT.T 
+    
+            # Sort eigenvectors in the descending order of eigenvalues.
+            sorted_eig_index = np.argsort(eigenvalues)[::-1] 
+            sorted_eigenvectors = eigenvectors_T[:, sorted_eig_index] 
+    
+            # Distance List
+            mean = np.mean(temp_merge, axis = 0)
+
+            sorted_dist_and_data = sorted_dist_list(np.array(temp_merge), mean, sorted_eigenvectors[0])
+            sorted_dist_hyperplane_point = sorted_dist_and_data[0] 
+                
+            dl_add = clusters[i][1] + clusters[x][1]
+            dl_union = DL(sorted_dist_hyperplane_point)
 
             if (dl_union < dl_add):
                 
-                #print('c1: ', clusters[i])
+                # remove c1 from clusters
+                # print('c1: ', clusters[i])
                 result = [item for item in result if item != clusters[i]]
                   
-                #print('c2: ', clusters[x])
+                # remove c2 from clusters
+                # print('c2: ', clusters[x])
                 result = [item for item in result if item != clusters[x]]
         
-                #print('temp_merge: ', temp_merge)
-                result.append(temp_merge)
+                # print('temp_merge: ', temp_merge)
+                result.append([temp_merge, dl_union])
                
                 return merge_cluster_DL(result)
 
     # If no merge happens
-    return result
+    return [item[0] for item in result]
  
 
 def main():        
@@ -207,7 +224,7 @@ def main():
     # 4. Sort eigenvectors in the descending order of eigenvalues.
     sorted_eig_index = np.argsort(eigenvalues)[::-1] # [::-1] = list[start : stop : step] = reverse a list
     sorted_eigenvectors = eigenvectors[:, sorted_eig_index] # sorted column vectors
-    #sorted_eigenvectors_T = sorted_eigenvectors.T
+    sorted_eigenvectors_T = sorted_eigenvectors.T
     
     sorted_eigenvectors_T = [[0.7709129685111153,0.636940495636273], [0.636940495636273,-0.7709129685111153]]
     
@@ -221,10 +238,11 @@ def main():
     
     # 5. Chopping process
     clusters = chop(data, sorted_eigenvectors_T, clusters_plot, dl_plot, True)
-    #final_clusters = merge_cluster_DL(clusters)
+    final_clusters = merge_cluster_DL(clusters)
 
-    #print(len(final_clusters))
-    show_cluster = clusters
+    print(len(final_clusters))
+    
+    show_cluster = final_clusters
     for i in range(len(show_cluster)):
         color = np.array([random.random(), random.random(), random.random()])
         color=color.reshape(1,-1)

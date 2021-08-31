@@ -825,14 +825,6 @@
         (lambda (return)
           (do ((eignum 0 (+ 1 eignum)))
               ((>= eignum (matrixGetN (car eigs)))
-               (when plot?
-                 (mlEval "figure;")                        ; Start an new figure
-                 ;(mlEval "subplot(2,1,1);")
-                 (plotCategories (list pop1 pop2))
-                 ;(plot2Ddata (cadr set) "+r" (format #f "Merging populations"))
-                 (plot2DEigenvectors (car mv) eigs)
-                 (mlEval "legend('Merged Cluster 1', 'Merged Cluster 2', 'Principal Eigenvector', 'Secondary Eigenvector',-1)")
-                 )
                set)
               (let* ((hyperplane (hyperplaneEquationPerpendicularForm (car mv) eigs eignum))
                      (cdists (computeDistanceList (cadr set) (car set) hyperplane))
@@ -927,6 +919,7 @@
       (do ((it 0 (+ it 1)))
           ((or (>= it iterations) (null? categories))
            ;; orphan merging
+		   ;; 1. Sort clusters based on its length
            (let ((res (map
                         (lambda (cluster)
                           (let ((mv (meanAndCovariance (cadr cluster))))
@@ -939,14 +932,12 @@
                  (merged nil))
              ;; Each element of res is (points mean invcovar (dims))
              ;; Sorted in order of increasing size.
+			 
+			
              (do ((clusters res (cdr clusters)))
-                 ((null? clusters) 
-                  (when plot?
-                    (mlEval "figure")
-                    (plotCategories merged))
-                  merged)
                  (callWithCurrentContinuation
                    (lambda (return)
+				     ;; 2. Loop through the 1st cluster vs rest, sort the rest based on the distance to the 1st cluster
                      (let* ((cands (map (lambda (cl)
                                          (list
                                            ((if (> (car cl) 2)
@@ -958,6 +949,7 @@
                                            cl))
                                        (cdr clusters)))
                             (scands (map cadr (bsort cands head>))))
+						;; 3. Loop through the 1st cluster vs the sorted rest (scands), try to merge them
                        (do ((mergers scands (cdr mergers)))
                            ((null? mergers) 
                             (push! (list (car (car clusters))           ; number of points
@@ -974,11 +966,14 @@
                                              (car (cddddr (car mergers))))
                                        0
                                        plot?)))
+									   
+							 ;; 4 If merge is true, we replace the 2 clusters with the merged cluster, repeat the whole process.
                              (when mc
                                ;(format "Orphan merged~%")
                                (push! mc merged)
                                (setCdr! clusters (delete (car mergers) (cdr clusters)))
                                (return #f))))))))))
+							   
           (let* ((biggestset (car categories))
                  (setsize (car biggestset))
                  (set (cadr biggestset))
@@ -986,11 +981,6 @@
             (set! categories (cdr categories))
             (let* ((mv (meanAndCovariance set))
                    (eigs (computeSortedEigenvectorsFromCovarianceMatrix (cadr mv))))
-              (when plot?
-                (mlEval "figure;")                        ; Start an new figure
-                (mlEval "subplot(2,1,1);")
-                (plot2Ddata set "+r" (format #f "2D test data - iteration ~a" it))
-                (plot2DEigenvectors (car mv) eigs))
               (let ((split (maybeDividePopulation set setsize setobj mv eigs numpoints plot?)))
                 (if split
                     ;; We split the data.  Add it to the list of categories and resort.

@@ -1,5 +1,6 @@
 (ns pcd.core
   (:require
+   [clojure.pprint :as pp]
    [clojure.core.matrix :as matrix]
    [clojure.core.matrix.stats :as matrix-stats]
    [clojure.core.matrix.dataset :as matrix-ds]
@@ -40,6 +41,11 @@
            ds (matrix-ds/dataset data)]
        ds))))
 
+(defn write-data-csv
+  [data]
+  (with-open [writer (io/writer "out-file.csv" :append true)]
+    (csv/write-csv writer data)))
+
 (defn matrix-float
   "Arguments: 
    • len: number of columns
@@ -53,24 +59,6 @@
       (recur (inc index) (into result [(vec (map #(Float/parseFloat %) (get ds index)))]))
       result)))
 
-;; MAIN 
-;; 1. Process data
-(def ds (process-data infile-path (list 0 1 2))) ;; import data and remove columns 0 1 2
-(def ds-float (matrix-float (count ds) ds)) ;; convert matrix of string to float
-
-;; 2. covariance matrix, eigenvalues and eigenvectors(
-(def cov-matrix (in-stats/covariance ds-float))
-(def svd (matrix-linear/svd ds-float))
-(def eigen-values (vec (get svd :S)))
-(def eigen-vectors-T (vec (get svd :V*)))
-
-;; 3. Sort eigenvectors in the descending order of eigenvalues.
-(def with-idx (map-indexed vector eigen-values))
-(def sorted-eigen-val (sort-by last > with-idx))
-(def sorted-idx (map #(first %) sorted-eigen-val))
-(def sorted-eigen-vectors (map #(get eigen-vectors-T %) sorted-idx))
-
-;; 4. Chopping process
 (defn get-dist-from-plane-to-origin
   "Note: The hyperplane starts at the mean point. It goes through the mean, and is perpendicular to the eigenvector"
   [mean eigenvector]
@@ -96,9 +84,27 @@
       (Double/isNaN variance) 0
       :else (+ 20 (* num-elements (log2 (Math/sqrt variance)))))))
 
-;;  RESULT IS NOT CORRECT, DO THIS!
-(defn divide-clusters-using-DL
+;; MAIN 
+;; 1. Process data
+(def ds (process-data infile-path (list 0 1 2))) ;; import data and remove columns 0 1 2
+(def ds-float (matrix-float (count ds) ds)) ;; convert matrix of string to float
+
+;; 2. covariance matrix, eigenvalues and eigenvectors(
+;; (def cov-matrix (in-stats/covariance ds-float))
+(def svd (matrix-linear/svd ds-float))
+(def eigen-values (vec (get svd :S)))
+(def eigen-vectors-T (vec (get svd :V*)))
+
+;; 3. Sort eigenvectors in the descending order of eigenvalues.
+(def with-idx (map-indexed vector eigen-values))
+(def sorted-eigen-val (sort-by last > with-idx))
+(def sorted-idx (map #(first %) sorted-eigen-val))
+(def sorted-eigen-vectors (map #(get eigen-vectors-T %) sorted-idx))
+
+;; 4. Chopping process
+(defn divide-cluster-using-DL
   [data-and-dist-vector]
+  "Find subclusters if any from a dataset and its distance array"
   (let [result-cut-point (loop
                           [temp1 data-and-dist-vector
                            temp2 []
@@ -129,10 +135,9 @@
       [(vec (map first data-and-dist-vector))] ;; return an vector of clusters 
       (let [sub-cluster1 (subvec data-and-dist-vector 0 (nth result-cut-point 0))
             sub-cluster2 (subvec data-and-dist-vector (nth result-cut-point 0))]
-        (concat (divide-clusters-using-DL sub-cluster1) (divide-clusters-using-DL sub-cluster2))))))
+        (concat (divide-cluster-using-DL sub-cluster1) (divide-cluster-using-DL sub-cluster2))))))
 
-
-(defn find-subcluster-from-data
+(defn find-subclusters-from-data
   "find subclusters, given a eigenvector and a dataset"
   [eigenvector data]
   (let
@@ -146,12 +151,14 @@
 
     ;; c. Sort the points in order of distance from the cutting hyper plane (positive to negative)
     sorted-dist-from-plane-to-points (vec (sort-by val > dist-from-plane-to-points-dict))
-    sub-clusters (divide-clusters-using-DL sorted-dist-from-plane-to-points)]
+
+    ;; d. Find subclusters if any
+    sub-clusters (divide-cluster-using-DL sorted-dist-from-plane-to-points)]
     ;; (println sub-clusters, (count sub-clusters))
 
     sub-clusters))
 
-(defn chop
+(defn chop-cluster
   [sorted-vectors, data]
   "find subclusters, given an array of sorted eigenvectors and a dataset"
   (loop
@@ -162,7 +169,7 @@
        [current-eigenvector (nth sorted-vectors index-vec)
         sub-clusters (if (= index-vec 0)
                        ;; 1st vector
-                       (find-subcluster-from-data current-eigenvector data)
+                       (find-subclusters-from-data current-eigenvector data)
 
                        ;; remaining vectors 
                        (loop
@@ -170,32 +177,173 @@
                          result []]
                          (if (< index-cluster (count clusters))
                            (let [curr-cluster (nth clusters index-cluster)
-                                 #_curr-data #_(if (= 2 (count (matrix/shape curr-cluster))) #This is when we have [[point] distance]
-                                                   (conj [] (first curr-cluster))
-                                                   (into [] (vec (map first curr-cluster))))
-                                 sub-curr-clusters (find-subcluster-from-data current-eigenvector curr-cluster)]
+                                 sub-curr-clusters (find-subclusters-from-data current-eigenvector curr-cluster)]
 
                              (recur (inc index-cluster)
                                     (into result sub-curr-clusters)))
                            result)))]
 
         (println current-eigenvector, (count sub-clusters))
-        (println sub-clusters)
         (recur (inc index-vec)
                sub-clusters))
       clusters)))
 
-;; (def sub-clusters (divide-clusters-using-DL clusters))
-;;    b. Get a list of distances of all points to the hyperplane
+(def clusters (chop-cluster sorted-eigen-vectors ds-float))
 
-;;       (def dist_hyperplane_point (matrix-operator/- dist_hyperplane_origin (matrix-proto/vector-dot ds-float e-vec)))
-;;    3. Sort distance_mean_point
+;; 5. Merging process
+(defn mahalanobis-distance
+  [point mean invcovar]
+  ;; sqrt[(point - mean).T * invcovar * (point - mean)]
 
-;;     # c) Sort distance_mean_point
-;;     sorted_index = np.argsort(dist_hyperplane_point)[::-1]
-;;     sorted_dist_hyperplane_point = dist_hyperplane_point[sorted_index]
-;;     sorted_data = data[sorted_index]
-;;     return [sorted_dist_hyperplane_point, sorted_data]
+  (matrix/mget (matrix/inner-product
+                (matrix/sub point mean)
+                invcovar
+                (matrix/transpose (matrix/sub point mean)))))
+
+(defn euclidean-distance
+  [point1 point2]
+  (Math/sqrt
+   (reduce + (map #(Math/pow (- %1 %2) 2) point1 point2))))
+
+(defn cluster-assignment-cost
+  [length-1 length-2]
+  (if (or (= length-1 0)
+          (= length-2 0))
+    0
+    (let [total-length (+ length-1 length-2) ;; 19 
+          probability-1 (/ length-1 total-length) ;; 10/19  -0.926
+          probability-2 (/ length-2 total-length)] ;; 9/19  -1.078  
+      ;; - [(total-length) * [(prob-1 * log2(prob-1)) + (prob-2 * log2(prob-2))]]
+      (- (* total-length
+           (+
+            (* probability-1 (log2 probability-1))
+            (* probability-2 (log2 probability-2))))))))
+
+(defn merge-2-clusters-using-DL
+  "Return true if we should merge 2 clusters. False otherwise."
+  [cluster1 cluster2]
+  (let [length-c1 (count cluster1)
+        length-c2 (count cluster2)
+        cac (cluster-assignment-cost length-c1 length-c2) ;; cost of asignment cost
+        merged-cluster (vec (concat cluster1 cluster2)) ;; merge 2 clusters
+
+        ;; get the sorted eigenvectors
+        svd (matrix-linear/svd merged-cluster)
+        eigen-values (vec (get svd :S))
+        eigen-vectors-T (vec (get svd :V*))
+        with-idx  (map-indexed vector eigen-values)
+        sorted-eigen-val (sort-by last > with-idx)
+        sorted-idx (map #(first %) sorted-eigen-val)
+        sorted-eigen-vectors (map #(get eigen-vectors-T %) sorted-idx)
+        mean (matrix-stats/mean merged-cluster)]
+    (loop
+     [eigen-index 0
+      return-val false]
+      (if (< eigen-index (count eigen-vectors-T))
+        (let [curr-eigenvector (nth sorted-eigen-vectors eigen-index)
+              dist-from-plane-to-origin (get-dist-from-plane-to-origin mean curr-eigenvector)
+              dist-from-plane-to-points-c1 (get-dist-from-plane-to-points dist-from-plane-to-origin cluster1 curr-eigenvector)
+              dist-from-plane-to-points-c2 (get-dist-from-plane-to-points dist-from-plane-to-origin cluster2 curr-eigenvector)
+              dist-from-plane-to-points-merged (get-dist-from-plane-to-points dist-from-plane-to-origin merged-cluster curr-eigenvector)
+              dl-1 (description-length dist-from-plane-to-points-c1)
+              dl-2 (description-length dist-from-plane-to-points-c2)
+              dl-1plus2 (+ dl-1 dl-2 cac) ;; No cac here -- still testing
+              dl-merged (description-length dist-from-plane-to-points-merged)]
+          
+          (if (< dl-merged dl-1plus2)   
+           (do 
+             ;; (println "cluster1 + cluster2: " dl-1plus2 "cac: " cac)
+             ;; (println "cluster1 AND cluster2 : " dl-merged)
+             true)
+            (recur (inc eigen-index) false)))
+        return-val))))
+
+(defn sort-by-distance
+  [cluster clusters]
+  (let [cluster-mean (matrix-stats/mean cluster)]
+    (sort-by #(if (<= (count %) 2)
+                (euclidean-distance cluster-mean (matrix-stats/mean %))
+                (mahalanobis-distance cluster-mean
+                                      (matrix-stats/mean %)
+                                      (matrix/inverse (in-stats/covariance %))))
+             <
+             clusters)))
+
+#_(reduce works like this
+        (reduce (fn [first rest]
+                 do something
+                 if (break condition) (reduced return value) ;; return immediately, works like "break" or "return" in JS
+                 else first = whatever value passed in here) array) ;; The value of "first" will be replaced here
+      
+          Each iteration
+          - "first" will be replaced by the last value in the bracket
+          - "rest" is the next element in the array)
+
+(defn merge-clusters
+  [clusters]
+
+  (let [;; 1. Sort clusters based on their lengths
+        sorted-clusters (vec (sort-by count > clusters))
+        length (count sorted-clusters)]
+     
+    ;; 2. Loop through the each cluster vs rest:
+    (loop 
+       [index 0
+        result []]
+        (if (< index length)
+          (let [current-cluster (vec (nth sorted-clusters index)) ;; the current-cluster in this iteration
+                rest-clusters (subvec sorted-clusters (+ index 1)) ;; all clusters after the current-cluster in this iteration (no repetition)
+
+                ;; 2a. Sort rest-clusters based on either the euclidean
+                ;; or mahalanobis distance in relative to the current cluster -- To speed up the merging process
+                sorted-rest-clusters (if (>= length 2)
+                                       (vec (sort-by-distance current-cluster rest-clusters)) ;; Only sort if we have more than 2 clusters
+                                       rest-clusters) ;; No need to sort if we only have 1 cluster.
+
+                ;; 2b. Try to merge the current-cluster with clusters in the sorted-rest-clusters 
+                joined-clusters (vec (concat [current-cluster] sorted-rest-clusters)) 
+                sorted-cluster-idx (atom 0) ;; If a merge happens, we can remove the cluster from sorted-rest-clusters using this index
+                output (reduce (fn [first-cluster sorted-cluster] 
+                                   (if (= true (merge-2-clusters-using-DL first-cluster sorted-cluster))
+                                     ;; If a merge happens, return the new vector of clusters, where the merged clusters is added, and the 2 clusters are removed
+                                     (do 
+                                       (println "Merge with: " sorted-cluster)
+                                       ;; (println (subvec sorted-clusters 0 (+ index 1)))
+                                       ;; (println [(vec (concat first-cluster sorted-cluster))])
+                                       ;; (println (vec-remove sorted-rest-clusters @sorted-cluster-idx))
+
+                                       (reduced
+                                        (concat
+                                         (vec-remove sorted-rest-clusters @sorted-cluster-idx) ;; remove the sorted-cluster from sorted-rest-clusters    
+                                         [(vec (concat first-cluster sorted-cluster))]         ;; the merged cluster
+                                         (subvec sorted-clusters 0 index))))             ;; all clusters iterated (not included in sorted-rest-clusters)
+                                     ;; Else, do nothing, the last iteration will return first-cluster, which should be "current-cluster"
+                                     (do
+                                       (swap! sorted-cluster-idx inc)
+                                       first-cluster))) joined-clusters)]
+
+            (if (= output current-cluster)
+              ;; No merge
+              (do
+                (println "NO MERGED" (count sorted-clusters))
+                (recur (inc index) ;; move onto the next cluster
+                       clusters))  ;; result = original clusters since no merge
+              ;; A merge happened
+              (do
+                (println "MERGED" (count sorted-clusters) (count output))
+                ;; (println "Vector before Merge")
+                ;; (pp/pprint sorted-clusters)
+                ;; (println "Vector after Merge")
+                ;; (pp/pprint output)
+                (merge-clusters (vec output))))) ;; recursively call merge-clusters with the new vector
+          result))))
+
+;; TESTING
+(def merged-clusters (merge-clusters clusters))
+
+(write-data-csv (map #(into ["x", "y"] %) merged-clusters))
+(map #(write-data-csv (into [["empty", "x", "y"]] %)) merged-clusters)
+
 
 (defn -main
   "I don't do a whole lot ... yet."
