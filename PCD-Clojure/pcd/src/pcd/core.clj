@@ -214,10 +214,10 @@
           probability-1 (/ length-1 total-length) ;; 10/19  -0.926
           probability-2 (/ length-2 total-length)] ;; 9/19  -1.078  
       ;; - [(total-length) * [(prob-1 * log2(prob-1)) + (prob-2 * log2(prob-2))]]
-      (- (* total-length
+      (* total-length
            (+
             (* probability-1 (log2 probability-1))
-            (* probability-2 (log2 probability-2))))))))
+            (* probability-2 (log2 probability-2)))))))
 
 (defn merge-2-clusters-using-DL
   "Return true if we should merge 2 clusters. False otherwise."
