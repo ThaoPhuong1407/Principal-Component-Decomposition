@@ -42,8 +42,8 @@
        ds))))
 
 (defn write-data-csv
-  [data]
-  (with-open [writer (io/writer "out-file.csv" :append true)]
+  [data out-file-name]
+  (with-open [writer (io/writer out-file-name :append true)]
     (csv/write-csv writer data)))
 
 (defn matrix-float
@@ -83,23 +83,6 @@
       (= variance 0) 20
       (Double/isNaN variance) 0
       :else (+ 20 (* num-elements (log2 (Math/sqrt variance)))))))
-
-;; MAIN 
-;; 1. Process data
-(def ds (process-data infile-path (list 0 1 2))) ;; import data and remove columns 0 1 2
-(def ds-float (matrix-float (count ds) ds)) ;; convert matrix of string to float
-
-;; 2. covariance matrix, eigenvalues and eigenvectors(
-;; (def cov-matrix (in-stats/covariance ds-float))
-(def svd (matrix-linear/svd ds-float))
-(def eigen-values (vec (get svd :S)))
-(def eigen-vectors-T (vec (get svd :V*)))
-
-;; 3. Sort eigenvectors in the descending order of eigenvalues.
-(def with-idx (map-indexed vector eigen-values))
-(def sorted-eigen-val (sort-by last > with-idx))
-(def sorted-idx (map #(first %) sorted-eigen-val))
-(def sorted-eigen-vectors (map #(get eigen-vectors-T %) sorted-idx))
 
 ;; 4. Chopping process
 (defn divide-cluster-using-DL
@@ -168,10 +151,11 @@
       (let
        [current-eigenvector (nth sorted-vectors index-vec)
         sub-clusters (if (= index-vec 0)
-                       ;; 1st vector
+                       ;; 1st eigen-vector
                        (find-subclusters-from-data current-eigenvector data)
 
-                       ;; remaining vectors 
+                       ;; remaining eigen-vectors 
+                       ;; Apply the chop to each subclusters cut by eigen-vector 1
                        (loop
                         [index-cluster 0
                          result []]
@@ -185,10 +169,8 @@
 
         (println current-eigenvector, (count sub-clusters))
         (recur (inc index-vec)
-               sub-clusters))
+               sub-clusters)) ;; assign to clusters []
       clusters)))
-
-(def clusters (chop-cluster sorted-eigen-vectors ds-float))
 
 ;; 5. Merging process
 (defn mahalanobis-distance
@@ -247,7 +229,7 @@
               dist-from-plane-to-points-merged (get-dist-from-plane-to-points dist-from-plane-to-origin merged-cluster curr-eigenvector)
               dl-1 (description-length dist-from-plane-to-points-c1)
               dl-2 (description-length dist-from-plane-to-points-c2)
-              dl-1plus2 (+ dl-1 dl-2 cac) ;; No cac here -- still testing
+              dl-1plus2 (+ dl-1 dl-2 cac) ;; If cac, we will just merge back everything because dl-1plus2 is always better than dl-merge
               dl-merged (description-length dist-from-plane-to-points-merged)]
           
           (if (< dl-merged dl-1plus2)   
@@ -307,16 +289,12 @@
                                    (if (= true (merge-2-clusters-using-DL first-cluster sorted-cluster))
                                      ;; If a merge happens, return the new vector of clusters, where the merged clusters is added, and the 2 clusters are removed
                                      (do 
-                                       (println "Merge with: " sorted-cluster)
-                                       ;; (println (subvec sorted-clusters 0 (+ index 1)))
-                                       ;; (println [(vec (concat first-cluster sorted-cluster))])
-                                       ;; (println (vec-remove sorted-rest-clusters @sorted-cluster-idx))
-
+                                       (println "Merg: " first-cluster sorted-cluster)
                                        (reduced
                                         (concat
                                          (vec-remove sorted-rest-clusters @sorted-cluster-idx) ;; remove the sorted-cluster from sorted-rest-clusters    
                                          [(vec (concat first-cluster sorted-cluster))]         ;; the merged cluster
-                                         (subvec sorted-clusters 0 index))))             ;; all clusters iterated (not included in sorted-rest-clusters)
+                                         (subvec sorted-clusters 0 index))))                   ;; all clusters iterated (not included in sorted-rest-clusters)
                                      ;; Else, do nothing, the last iteration will return first-cluster, which should be "current-cluster"
                                      (do
                                        (swap! sorted-cluster-idx inc)
@@ -338,16 +316,45 @@
                 (merge-clusters (vec output))))) ;; recursively call merge-clusters with the new vector
           result))))
 
-;; TESTING
-(def merged-clusters (merge-clusters clusters))
-
-(write-data-csv (map #(into ["x", "y"] %) merged-clusters))
-(map #(write-data-csv (into [["empty", "x", "y"]] %)) merged-clusters)
-
 
 (defn -main
   "I don't do a whole lot ... yet."
-  [& args])
+  [& args]
+  ;; MAIN 
+;; 1. Process data
+  (def ds (process-data infile-path (list 0 1 2))) ;; import data and remove columns 0 1 2
+  (def ds-float (matrix-float (count ds) ds)) ;; convert matrix of string to float
+
+;; 2. covariance matrix, eigenvalues and eigenvectors(
+;; (def cov-matrix (in-stats/covariance ds-float))
+  (def svd (matrix-linear/svd ds-float))
+  (def eigen-values (vec (get svd :S)))
+  (def eigen-vectors-T (vec (get svd :V*)))
+
+;; 3. Sort eigenvectors in the descending order of eigenvalues.
+  (def with-idx (map-indexed vector eigen-values))
+  (def sorted-eigen-val (sort-by last > with-idx))
+  (def sorted-idx (map #(first %) sorted-eigen-val))
+  (def sorted-eigen-vectors (map #(get eigen-vectors-T %) sorted-idx))
+
+  ;; 4. Chop the dataset
+  (def clusters (chop-cluster sorted-eigen-vectors ds-float))
+
+  ;; 5. Try to merge back all clusters above (handle non-convex cases) 
+  (def merged-clusters (merge-clusters clusters))
+
+  ;; 6. Output the data for visualization or futher processing
+  ;; The original data 
+  (write-data-csv (into [["x", "y"]] ds) "original.csv")
+
+  ;; The Chopped data 
+  ;; (write-data-csv (into [["Chopped Data"]] []) "chop.csv")
+  (map #(write-data-csv (into [["x", "y"]] %) "chop.csv") clusters)   ;; Don't know why the data in this section isn't stored (as if the code wasn't called)
+
+  ;; The merged-clusters
+  ;; (write-data-csv (map #(into ["x", "y"] %) merged-clusters) "merge.csv")
+  ;; (write-data-csv (into [["Merged Data"]] []) "merge.csv")
+  (map #(write-data-csv (into [["x", "y"]] %) "merge.csv") merged-clusters))
 
 
 
