@@ -153,7 +153,9 @@
         sub-clusters (if (= index-vec 0)
                        ;; 1st eigen-vector
                        (find-subclusters-from-data current-eigenvector data)
-
+                    
+                       ;; Once we chop the data, we will ignore the 2nd eigenvector moving forward.
+                       ;; Generate new eigenvectors for each subclusters
                        ;; remaining eigen-vectors 
                        ;; Apply the chop to each subclusters cut by eigen-vector 1
                        (loop
@@ -344,16 +346,8 @@
   (def merged-clusters (merge-clusters clusters))
 
   ;; 6. Output the data for visualization or futher processing
-  ;; The original data 
   (write-data-csv (into [["x", "y"]] ds) "original.csv")
-
-  ;; The Chopped data 
-  ;; (write-data-csv (into [["Chopped Data"]] []) "chop.csv")
   (map #(write-data-csv (into [["x", "y"]] %) "chop.csv") clusters)   ;; Don't know why the data in this section isn't stored (as if the code wasn't called)
-
-  ;; The merged-clusters
-  ;; (write-data-csv (map #(into ["x", "y"] %) merged-clusters) "merge.csv")
-  ;; (write-data-csv (into [["Merged Data"]] []) "merge.csv")
   (map #(write-data-csv (into [["x", "y"]] %) "merge.csv") merged-clusters))
 
 
