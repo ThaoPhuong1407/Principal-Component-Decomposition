@@ -3,11 +3,13 @@
 
 (set-env! :resource-paths #{"resources" "src"}
           :source-paths   #{"test"}
-          :dependencies   '[[org.clojure/clojure "RELEASE"]
-                            [adzerk/boot-test "RELEASE" :scope "test"]
+          :dependencies   '[[org.clojure/clojure "1.10.0"]
+                            ;; [adzerk/boot-test "RELEASE" :scope "test"]
                             [org.clojure/data.csv "0.1.3"]
                             [net.mikera/core.matrix "0.62.0"]
-                            [incanter "1.9.3"]])
+                            [incanter "1.9.3"]
+                            [clj-python/libpython-clj "2.00-beta-15"]
+                            #_[cnuernber/libpython-clj "1.36"]])
 
 (task-options!
  aot {:namespace   #{'pcd.core}}
@@ -35,4 +37,4 @@
     (require '[pcd.core :as app])
     (apply (resolve 'app/-main) args)))
 
-(require '[adzerk.boot-test :refer [test]])
+;; (require '[adzerk.boot-test :refer [test]])

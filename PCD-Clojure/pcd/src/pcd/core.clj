@@ -1,6 +1,10 @@
 (ns pcd.core
   (:require
    [clojure.pprint :as pp]
+   [clojure.java.io :as io]
+   [clojure.data.csv :as csv]
+
+   ;; stats
    [clojure.core.matrix :as matrix]
    [clojure.core.matrix.stats :as matrix-stats]
    [clojure.core.matrix.dataset :as matrix-ds]
@@ -9,9 +13,24 @@
    [clojure.core.matrix.operators :as matrix-operator]
    [incanter.core :as in-core]
    [incanter.stats :as in-stats]
-   [clojure.java.io :as io]
-   [clojure.data.csv :as csv])
+   
+   ;; Matplotlib
+   [libpython-clj2.require :refer [require-python]]
+   [libpython-clj2.python :refer [py. py.. py.-] :as py]
+
+   ;; display the plot
+   [clojure.java.shell :as sh])
   (:gen-class))
+
+;; Matplotlib 
+(require-python '[matplotlib.pyplot :as plot])
+(defmacro with-show
+  "Takes forms with mathplotlib.pyplot to then show locally"
+  [save-file & body]
+  `(let [_# (plot/clf) ;; clear the current figure
+         fig# (plot/figure)]
+     ~(cons 'do body) ;; what we want to plot
+     (plot/savefig ~save-file)))
 
 ;; VARIABLES
 (def infile-path "../../data/Mall_Customers.csv")
@@ -43,7 +62,7 @@
 
 (defn write-data-csv
   [data out-file-name]
-  (with-open [writer (io/writer out-file-name :append true)]
+  (with-open [writer (io/writer (str "./src/pcd/data-output/" out-file-name) :append true)]
     (csv/write-csv writer data)))
 
 (defn matrix-float
@@ -84,16 +103,50 @@
       (Double/isNaN variance) 0
       :else (+ 20 (* num-elements (log2 (Math/sqrt variance)))))))
 
+(defn cluster-assignment-cost
+  [length-1 length-2]
+  (if (or (= length-1 0)
+          (= length-2 0))
+    0
+    (let [total-length (+ length-1 length-2) ;; 19 
+          probability-1 (/ length-1 total-length) ;; 10/19  -0.926
+          probability-2 (/ length-2 total-length)] ;; 9/19  -1.078  
+      ;; Formula: -[(total-length) * [(prob-1 * log2(prob-1)) + (prob-2 * log2(prob-2))]]
+      (- (* total-length
+           (+
+            (* probability-1 (log2 probability-1))
+            (* probability-2 (log2 probability-2))))))))
+
+(defn get-sorted-eigen-vectors
+  [data]
+  (let [
+        ;; 1. Find eigenvalues and eigenvectors using SVD
+        ;; cov-matrix (in-stats/covariance data)
+        svd (matrix-linear/svd data)
+        eigen-values (vec (get svd :S))
+        eigen-vectors-T (vec (get svd :V*))
+
+        ;; 2. Sort eigenvectors in the descending order of eigenvalues.
+        assign-idx (map-indexed vector eigen-values)
+        sorted-eigen-val (sort-by last > assign-idx)
+        sorted-idx (map #(first %) sorted-eigen-val)
+        sorted-eigen-vectors (map #(get eigen-vectors-T %) sorted-idx)]
+  sorted-eigen-vectors))
+
 ;; 4. Chopping process
-(defn divide-cluster-using-DL
+(defn maybe-divide-cluster-using-DL
+  "Divide a cluster into 2 sub-clusters if makes sense
+   The input is in form of [[data1, distance1], [data2, distance2], etc.]. 
+      Reason: Although we return the actual data set, we need the distances for calculation"
   [data-and-dist-vector]
-  "Find subclusters if any from a dataset and its distance array"
+
+  ;; result-cut-point = [cut-point, dl-arr]
   (let [result-cut-point (loop
                           [temp1 data-and-dist-vector
                            temp2 []
                            minDL (description-length (into [] (map last data-and-dist-vector)))
                            cut-point 0
-                           dl-arr [minDL]
+                           dl-arr [minDL] ;; For visualization, which is not yet implemented for Clojure
                            index 0]
 
                            (if (< index (count data-and-dist-vector))
@@ -103,7 +156,7 @@
                                    data-and-dist-2 (conj temp2 curr-item)
                                    dist-1 (into [] (map last data-and-dist-1))
                                    dist-2 (into [] (map last data-and-dist-2))
-                                   new-dl (+ (description-length dist-1) (description-length dist-2))
+                                   new-dl (+ (cluster-assignment-cost (count dist-1) (count dist-2)) (description-length dist-1) (description-length dist-2))
                                    cut-point-temp (if (< new-dl minDL) (+ 1 index) cut-point)]
 
                                (recur data-and-dist-1
@@ -115,13 +168,27 @@
                              [cut-point, dl-arr]))]
 
     (if (= (nth result-cut-point 0) 0)
-      [(vec (map first data-and-dist-vector))] ;; return an vector of clusters 
+      ;; if cut-point is still = 0, simply return the input data
+      [(vec (map first data-and-dist-vector))] ;; return an [] array of data 
+
+      ;; else, there is a cut at result-cut-point
       (let [sub-cluster1 (subvec data-and-dist-vector 0 (nth result-cut-point 0))
             sub-cluster2 (subvec data-and-dist-vector (nth result-cut-point 0))]
-        (concat (divide-cluster-using-DL sub-cluster1) (divide-cluster-using-DL sub-cluster2))))))
+        
+        ;; Save DL
+        (write-data-csv [(nth result-cut-point 1)] "description-len-chop.csv")
+    
+        ;; Visualize the description length 
+        (let [data-y (nth result-cut-point 1)
+              data-x (range (count data-y))]
+          (plot/plot data-x data-y)
+          (plot/savefig "./src/pcd/picture-output/DL" :bbox_inches "tight")
+          #_(with-show "./src/pcd/picture-output/description-length" (plot/plot data-x data-y)))
 
-(defn find-subclusters-from-data
-  "find subclusters, given a eigenvector and a dataset"
+        [(vec (map first sub-cluster1))  (vec (map first sub-cluster2))]))))
+
+(defn get-descending-sort-dist
+  "Return a descending sorted list of distances between points to hyperplane"
   [eigenvector data]
   (let
    [;; a. Find the distance of the hyperplane, which goes through data mean, to origin
@@ -133,47 +200,68 @@
     dist-from-plane-to-points-dict (zipmap data dist-from-plane-to-points)
 
     ;; c. Sort the points in order of distance from the cutting hyper plane (positive to negative)
-    sorted-dist-from-plane-to-points (vec (sort-by val > dist-from-plane-to-points-dict))
-
-    ;; d. Find subclusters if any
-    sub-clusters (divide-cluster-using-DL sorted-dist-from-plane-to-points)]
-    ;; (println sub-clusters, (count sub-clusters))
-
-    sub-clusters))
+    sorted-dist-from-plane-to-points (vec (sort-by val > dist-from-plane-to-points-dict))]
+    sorted-dist-from-plane-to-points))
 
 (defn chop-cluster
-  [sorted-vectors, data]
   "find subclusters, given an array of sorted eigenvectors and a dataset"
-  (loop
-   [index-vec 0
-    clusters []]
-    (if (< index-vec (count sorted-vectors))
-      (let
-       [current-eigenvector (nth sorted-vectors index-vec)
-        sub-clusters (if (= index-vec 0)
-                       ;; 1st eigen-vector
-                       (find-subclusters-from-data current-eigenvector data)
-                    
-                       ;; Once we chop the data, we will ignore the 2nd eigenvector moving forward.
-                       ;; Generate new eigenvectors for each subclusters
-                       ;; remaining eigen-vectors 
-                       ;; Apply the chop to each subclusters cut by eigen-vector 1
-                       (loop
-                        [index-cluster 0
-                         result []]
-                         (if (< index-cluster (count clusters))
-                           (let [curr-cluster (nth clusters index-cluster)
-                                 sub-curr-clusters (find-subclusters-from-data current-eigenvector curr-cluster)]
+  [data]
+    ;; 2. Try to chop each sub-cluster inside the unchopped-clusters
+    (loop [unchopped-clusters [data] ;; All clusters in this array still need to be processed  
+           final-chopped-clusters []];; All clusters in this array are in their best shape and cannot be chopped down anymore
+      
+      ;; Debugging println
+      (println "")
+      (println "-----------")
+      (println "unchopped-clusters:" (count unchopped-clusters))
+      (println "final-chopped-clusters:" (count final-chopped-clusters))
 
-                             (recur (inc index-cluster)
-                                    (into result sub-curr-clusters)))
-                           result)))]
+      ;; if no more clusters in the unchopped-clusters
+      (if (== (count unchopped-clusters) 0)
+        ;; if true, return the final-chopped-list
+        final-chopped-clusters
+        
+        ;; else
+        (let [curr-cluster (first unchopped-clusters)
+              ;; Get the sorted eigenvectors for the current cluster
+              sorted-eigen-vectors (get-sorted-eigen-vectors curr-cluster)
 
-        (println current-eigenvector, (count sub-clusters))
-        (recur (inc index-vec)
-               sub-clusters)) ;; assign to clusters []
-      clusters)))
+              ;; for each eigen-vector, try to chop the curr-cluster. if chopped, break
+              chopped-clusters   (loop
+                                  [idx-eigvec   0
+                                   chopped      false
+                                   after-chopped-clusters []]
 
+                                   ;; Loop break-out condition
+                                   (if (or (>= idx-eigvec (count sorted-eigen-vectors))
+                                           (= chopped true))
+
+                                     ;; if done, return the after-chopped-clusters
+                                     after-chopped-clusters
+
+                                     ;; else, try to chop
+                                     (let [curr-eivector (nth sorted-eigen-vectors idx-eigvec)
+                                          ;; the sorted distances from points to the hyperplane
+                                           sorted-dist (get-descending-sort-dist curr-eivector curr-cluster)
+                                          ;; sub-curr-clusters should be an array of either 1 or 2 clusters. No more or less        
+                                           sub-curr-clusters (maybe-divide-cluster-using-DL sorted-dist)]
+
+                                       (println "trying to chop using: " curr-eivector)
+                                       (recur (inc idx-eigvec)
+                                              (if (== (count sub-curr-clusters) 1) false true)
+                                              sub-curr-clusters)))) ;; chopped
+
+              is-chopped (if (== (count chopped-clusters) 2) true false)]
+        
+          (println "chopped: " is-chopped)
+          (if is-chopped
+            ;; there is a chopped: (1) remove the processed cluster, (2) add the 2 sub clusters to the unchopped-clusters
+            (recur (into (drop 1 unchopped-clusters) chopped-clusters)
+                   final-chopped-clusters)
+            ;; all set, no more chop: (1) remove the processed cluster, (2) add that removed cluster to final-chopped-clusters
+            (recur (drop 1 unchopped-clusters)
+                   (into final-chopped-clusters chopped-clusters)))))))
+            
 ;; 5. Merging process
 (defn mahalanobis-distance
   [point mean invcovar]
@@ -188,20 +276,6 @@
   [point1 point2]
   (Math/sqrt
    (reduce + (map #(Math/pow (- %1 %2) 2) point1 point2))))
-
-(defn cluster-assignment-cost
-  [length-1 length-2]
-  (if (or (= length-1 0)
-          (= length-2 0))
-    0
-    (let [total-length (+ length-1 length-2) ;; 19 
-          probability-1 (/ length-1 total-length) ;; 10/19  -0.926
-          probability-2 (/ length-2 total-length)] ;; 9/19  -1.078  
-      ;; - [(total-length) * [(prob-1 * log2(prob-1)) + (prob-2 * log2(prob-2))]]
-      (* total-length
-           (+
-            (* probability-1 (log2 probability-1))
-            (* probability-2 (log2 probability-2)))))))
 
 (defn merge-2-clusters-using-DL
   "Return true if we should merge 2 clusters. False otherwise."
@@ -231,7 +305,7 @@
               dist-from-plane-to-points-merged (get-dist-from-plane-to-points dist-from-plane-to-origin merged-cluster curr-eigenvector)
               dl-1 (description-length dist-from-plane-to-points-c1)
               dl-2 (description-length dist-from-plane-to-points-c2)
-              dl-1plus2 (+ dl-1 dl-2 cac) ;; If cac, we will just merge back everything because dl-1plus2 is always better than dl-merge
+              dl-1plus2 (+ dl-1 dl-2 cac) ;; Note: If we add cac, we will just merge back everything because dl-1plus2 is always better than dl-merge
               dl-merged (description-length dist-from-plane-to-points-merged)]
           
           (if (< dl-merged dl-1plus2)   
@@ -250,7 +324,6 @@
                 (mahalanobis-distance cluster-mean
                                       (matrix-stats/mean %)
                                       (matrix/inverse (in-stats/covariance %))))
-             <
              clusters)))
 
 #_(reduce works like this
@@ -290,8 +363,8 @@
                 output (reduce (fn [first-cluster sorted-cluster] 
                                    (if (= true (merge-2-clusters-using-DL first-cluster sorted-cluster))
                                      ;; If a merge happens, return the new vector of clusters, where the merged clusters is added, and the 2 clusters are removed
-                                     (do 
-                                       (println "Merg: " first-cluster sorted-cluster)
+                                     (do
+                                       #_(println "MERGED: " first-cluster sorted-cluster)
                                        (reduced
                                         (concat
                                          (vec-remove sorted-rest-clusters @sorted-cluster-idx) ;; remove the sorted-cluster from sorted-rest-clusters    
@@ -302,6 +375,7 @@
                                        (swap! sorted-cluster-idx inc)
                                        first-cluster))) joined-clusters)]
 
+            (println "-------------")
             (if (= output current-cluster)
               ;; No merge
               (do
@@ -309,46 +383,31 @@
                 (recur (inc index) ;; move onto the next cluster
                        clusters))  ;; result = original clusters since no merge
               ;; A merge happened
-              (do
-                (println "MERGED" (count sorted-clusters) (count output))
-                ;; (println "Vector before Merge")
-                ;; (pp/pprint sorted-clusters)
-                ;; (println "Vector after Merge")
-                ;; (pp/pprint output)
+              (do                    
+                (println "MERGED")
                 (merge-clusters (vec output))))) ;; recursively call merge-clusters with the new vector
           result))))
-
 
 (defn -main
   "I don't do a whole lot ... yet."
   [& args]
   ;; MAIN 
-;; 1. Process data
-  (def ds (process-data infile-path (list 0 1 2))) ;; import data and remove columns 0 1 2
-  (def ds-float (matrix-float (count ds) ds)) ;; convert matrix of string to float
+  ;; Need this to handle "NSWindow drag regions should only be invalidated on the Main Thread!"
+  (let [mplot (py/import-module "matplotlib")]
+    (py/call-attr mplot "use" "WebAgg")
+    (py/call-attr mplot "use" "Agg"))
+  
+  (let [;; 1. Process data
+        ds (process-data infile-path (list 0 1 2)) ;; import data and remove columns 0 1 2
+        ds-float (matrix-float (count ds) ds)      ;; convert matrix of string to float
 
-;; 2. covariance matrix, eigenvalues and eigenvectors(
-;; (def cov-matrix (in-stats/covariance ds-float))
-  (def svd (matrix-linear/svd ds-float))
-  (def eigen-values (vec (get svd :S)))
-  (def eigen-vectors-T (vec (get svd :V*)))
+        ;; 3. Chop the dataset
+        chopped-clusters (chop-cluster ds-float)
 
-;; 3. Sort eigenvectors in the descending order of eigenvalues.
-  (def with-idx (map-indexed vector eigen-values))
-  (def sorted-eigen-val (sort-by last > with-idx))
-  (def sorted-idx (map #(first %) sorted-eigen-val))
-  (def sorted-eigen-vectors (map #(get eigen-vectors-T %) sorted-idx))
+        ;; 4. Merge the clusters from (3)
+        merged-clusters (merge-clusters chopped-clusters)]
 
-  ;; 4. Chop the dataset
-  (def clusters (chop-cluster sorted-eigen-vectors ds-float))
-
-  ;; 5. Try to merge back all clusters above (handle non-convex cases) 
-  (def merged-clusters (merge-clusters clusters))
-
-  ;; 6. Output the data for visualization or futher processing
-  (write-data-csv (into [["x", "y"]] ds) "original.csv")
-  (map #(write-data-csv (into [["x", "y"]] %) "chop.csv") clusters)   ;; Don't know why the data in this section isn't stored (as if the code wasn't called)
-  (map #(write-data-csv (into [["x", "y"]] %) "merge.csv") merged-clusters))
-
-
-
+    ;; Output the data for visualization or futher processing
+    (map #(write-data-csv (into [["x", "y"]] %) "chop.csv") chopped-clusters)   ;; Don't know why the data in this section isn't stored (as if the code wasn't called)
+    (map #(write-data-csv (into [["x", "y"]] %) "merge.csv") merged-clusters)
+    (write-data-csv (into [["x", "y"]] ds) "original.csv")))
