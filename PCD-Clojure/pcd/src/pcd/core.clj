@@ -24,7 +24,8 @@
 
 ;; Matplotlib 
 (require-python '[matplotlib.pyplot :as plot])
-(defmacro with-show
+
+#_(defmacro with-show
   "Takes forms with mathplotlib.pyplot to then show locally"
   [save-file & body]
   `(let [_# (plot/clf) ;; clear the current figure
@@ -81,6 +82,8 @@
 (defn get-dist-from-plane-to-origin
   "Note: The hyperplane starts at the mean point. It goes through the mean, and is perpendicular to the eigenvector"
   [mean eigenvector]
+  ;; (println "here" mean eigenvector)
+  ;; (println (matrix-proto/vector-dot mean eigenvector))
   (matrix-proto/vector-dot mean eigenvector))
 
 (defn get-dist-from-plane-to-points
@@ -131,6 +134,7 @@
         sorted-eigen-val (sort-by last > assign-idx)
         sorted-idx (map #(first %) sorted-eigen-val)
         sorted-eigen-vectors (map #(get eigen-vectors-T %) sorted-idx)]
+  
   sorted-eigen-vectors))
 
 ;; 4. Chopping process
@@ -138,10 +142,14 @@
   "Divide a cluster into 2 sub-clusters if makes sense
    The input is in form of [[data1, distance1], [data2, distance2], etc.]. 
       Reason: Although we return the actual data set, we need the distances for calculation"
-  [data-and-dist-vector]
+  [data-and-dist-vector eigenvector]
 
+  ;; DIVIDING PROCESS
   ;; result-cut-point = [cut-point, dl-arr]
-  (let [result-cut-point (loop
+  (let [data (map first data-and-dist-vector)
+        mean (matrix-stats/mean data)
+        ;; slope (/ (nth eigenvector 1) (nth eigenvector 2))
+        result-cut-point (loop
                           [temp1 data-and-dist-vector
                            temp2 []
                            minDL (description-length (into [] (map last data-and-dist-vector)))
@@ -158,34 +166,66 @@
                                    dist-2 (into [] (map last data-and-dist-2))
                                    new-dl (+ (cluster-assignment-cost (count dist-1) (count dist-2)) (description-length dist-1) (description-length dist-2))
                                    cut-point-temp (if (< new-dl minDL) (+ 1 index) cut-point)]
-
+                              ;;  (println minDL new-dl)
                                (recur data-and-dist-1
                                       data-and-dist-2
                                       (if (< new-dl minDL) new-dl minDL)
                                       cut-point-temp
                                       (conj dl-arr new-dl)
                                       (inc index)))
-                             [cut-point, dl-arr]))]
 
-    (if (= (nth result-cut-point 0) 0)
+                             [cut-point, dl-arr]))
+        cut-point (nth result-cut-point 0)
+        dl-arr (nth result-cut-point 1)
+        cluster-1 (subvec data-and-dist-vector 0 cut-point)
+        cluster-2 (subvec data-and-dist-vector cut-point)
+        cluster-data-1 (vec (map first cluster-1))  
+        cluster-data-2 (vec (map first cluster-2))]
+
+    ;;;;; SAVE DL DATA
+    (write-data-csv [dl-arr] "description-len-chop.csv")
+
+    ;;;;; VISUALIZATION 
+    ;; 1. Visualize the description length 
+    (let [data-y (nth result-cut-point 1)
+          data-x (range (count data-y))]
+      ;;; set up a subplot gird that has a height of 2 and width of 1
+      ;; set the first subplot as active
+      (plot/subplot 1 3 2)
+      (plot/plot data-x data-y)
+      (plot/title "DL")
+      #_(with-show "./src/pcd/picture-output/description-length" (plot/plot data-x data-y)))
+
+    ;; 2. Visualize the cut point (NEED TESTING!)
+    (let [cluster1X (into [] (map first cluster-data-1)) ;; x
+          cluster1Y (into [] (map last cluster-data-1))  ;; y
+          cluster2X (into [] (map first cluster-data-2))
+          cluster2Y (into [] (map last cluster-data-2))
+       
+          ]
+      ;; set the second subplot as active
+      (plot/subplot 1 3 3)
+      (println "1" cluster-data-1)
+      (println "2" cluster-data-2)
+      (plot/scatter cluster1X cluster1Y :c "red")
+      (plot/scatter cluster2X cluster2Y :c "blue")
+      ;; (plot/quiver (first mean)  (second mean) (second eigenvector) (- (first eigenvector)) :color "red" :scale 2) ;; hyperplane at mean
+      (plot/quiver (first mean)  (second mean)  (first eigenvector) (second eigenvector) :color "orange" :scale 2)  ;; current eigenvector
+      (plot/quiver (first cluster2X)  (first cluster2Y) (second eigenvector) (- (first eigenvector)) :color "red" :scale 2) ;; cut-point
+      (plot/scatter (first cluster2X) (first cluster2Y) :c "yellow")
+      ;; (plot/scatter (second cluster2X) (second cluster2Y) :c "orange")
+      (plot/legend ["first cluster" "second cluster" "eigenvec" "hyperplane"])
+
+      (plot/title "Cut point")
+      (plot/savefig "./src/pcd/picture-output/TEST" :bbox_inches "tight"))
+
+    ;;;;; RETRUN DATA
+    (if (= cut-point 0)
       ;; if cut-point is still = 0, simply return the input data
-      [(vec (map first data-and-dist-vector))] ;; return an [] array of data 
+      [(vec (map first data-and-dist-vector))] ;; return an [] array of data, no distances 
 
-      ;; else, there is a cut at result-cut-point
-      (let [sub-cluster1 (subvec data-and-dist-vector 0 (nth result-cut-point 0))
-            sub-cluster2 (subvec data-and-dist-vector (nth result-cut-point 0))]
-        
-        ;; Save DL
-        (write-data-csv [(nth result-cut-point 1)] "description-len-chop.csv")
-    
-        ;; Visualize the description length 
-        (let [data-y (nth result-cut-point 1)
-              data-x (range (count data-y))]
-          (plot/plot data-x data-y)
-          (plot/savefig "./src/pcd/picture-output/DL" :bbox_inches "tight")
-          #_(with-show "./src/pcd/picture-output/description-length" (plot/plot data-x data-y)))
-
-        [(vec (map first sub-cluster1))  (vec (map first sub-cluster2))]))))
+      ;; else, there is a cut at result-cut-point, return 2 clusters of data
+      [cluster-data-1 cluster-data-2])))
 
 (defn get-descending-sort-dist
   "Return a descending sorted list of distances between points to hyperplane"
@@ -201,6 +241,12 @@
 
     ;; c. Sort the points in order of distance from the cutting hyper plane (positive to negative)
     sorted-dist-from-plane-to-points (vec (sort-by val > dist-from-plane-to-points-dict))]
+
+    (plot/subplot 1 3 1)
+    (plot/scatter  (into [] (map first data)) (into [] (map last data)) :c "orange")
+    (plot/quiver (first mean) (second mean) (first eigenvector) (second eigenvector) :color "blue" :scale 3)
+    (plot/title "Data with Eigenvecs")
+    
     sorted-dist-from-plane-to-points))
 
 (defn chop-cluster
@@ -233,7 +279,7 @@
                                    after-chopped-clusters []]
 
                                    ;; Loop break-out condition
-                                   (if (or (>= idx-eigvec (count sorted-eigen-vectors))
+                                   (if (or (>= idx-eigvec (- (count sorted-eigen-vectors) 1))
                                            (= chopped true))
 
                                      ;; if done, return the after-chopped-clusters
@@ -241,10 +287,13 @@
 
                                      ;; else, try to chop
                                      (let [curr-eivector (nth sorted-eigen-vectors idx-eigvec)
+                                           hyperplane [(second curr-eivector) (- (first curr-eivector))]
                                           ;; the sorted distances from points to the hyperplane
+                                           ;; We are using the curr-eivector, not the hyperplane
+                                           ;; ISSUE!
                                            sorted-dist (get-descending-sort-dist curr-eivector curr-cluster)
                                           ;; sub-curr-clusters should be an array of either 1 or 2 clusters. No more or less        
-                                           sub-curr-clusters (maybe-divide-cluster-using-DL sorted-dist)]
+                                           sub-curr-clusters (maybe-divide-cluster-using-DL sorted-dist curr-eivector)]
 
                                        (println "trying to chop using: " curr-eivector)
                                        (recur (inc idx-eigvec)
@@ -254,7 +303,7 @@
               is-chopped (if (== (count chopped-clusters) 2) true false)]
         
           (println "chopped: " is-chopped)
-          (if is-chopped
+          #_(if is-chopped
             ;; there is a chopped: (1) remove the processed cluster, (2) add the 2 sub clusters to the unchopped-clusters
             (recur (into (drop 1 unchopped-clusters) chopped-clusters)
                    final-chopped-clusters)
@@ -391,12 +440,13 @@
 (defn -main
   "I don't do a whole lot ... yet."
   [& args]
-  ;; MAIN 
+
   ;; Need this to handle "NSWindow drag regions should only be invalidated on the Main Thread!"
   (let [mplot (py/import-module "matplotlib")]
     (py/call-attr mplot "use" "WebAgg")
     (py/call-attr mplot "use" "Agg"))
   
+  ;; The PCD process
   (let [;; 1. Process data
         ds (process-data infile-path (list 0 1 2)) ;; import data and remove columns 0 1 2
         ds-float (matrix-float (count ds) ds)      ;; convert matrix of string to float
@@ -411,3 +461,7 @@
     (map #(write-data-csv (into [["x", "y"]] %) "chop.csv") chopped-clusters)   ;; Don't know why the data in this section isn't stored (as if the code wasn't called)
     (map #(write-data-csv (into [["x", "y"]] %) "merge.csv") merged-clusters)
     (write-data-csv (into [["x", "y"]] ds) "original.csv")))
+
+
+
+
