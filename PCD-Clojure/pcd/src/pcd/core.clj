@@ -79,6 +79,12 @@
       (recur (inc index) (into result [(vec (map #(Float/parseFloat %) (get ds index)))]))
       result)))
 
+(defn euclidean-distance
+  [point1 point2]
+  (Math/sqrt
+   (reduce + (map #(Math/pow (- %1 %2) 2) point1 point2))))
+
+
 (defn get-dist-from-plane-to-origin
   "Note: The hyperplane starts at the mean point. It goes through the mean, and is perpendicular to the eigenvector"
   [mean eigenvector]
@@ -93,6 +99,43 @@
         dist-from-plane-to-points (matrix-operator/- dist-from-plane-to-origin dist-from-points-to-origin)
         len-dist (count dist-from-plane-to-points)]
     (matrix/reshape dist-from-plane-to-points [len-dist])))
+
+(defn get-dist-from-plane-to-points-V2
+  
+  "References: https://www.khanacademy.org/math/linear-algebra/vectors-and-spaces/dot-cross-products/v/point-distance-to-plane
+   - plane equation: ax + by + cz = d, input is in form: [a, b, c, -d]
+   - normal vec = [a b c]
+   - Distance from a point to a plane = (dot(point, normalVec) - d) / normalVecLength "
+  
+  [planeEquation points]
+  (let [normVec (butlast planeEquation) ;; a, b, c
+        d (last planeEquation) ;; -d
+        arrayOfZero (make-array Double/TYPE (count normVec))
+        normalVecLength (euclidean-distance normVec arrayOfZero)
+        distanceList (loop [index 0
+                            distances []]
+
+                       ;; Break-out condition 
+                       (if (>= index (count points))
+                         ;; return the distance list
+                         distances
+
+                         ;; calculate the distance from point to plane
+                         (let [curr-point (nth points index)
+                               dotVal (+ (matrix-proto/vector-dot curr-point normVec) d)
+                               distance (/ dotVal normalVecLength)]
+                           (recur (inc index)
+                                  (conj distances distance)))))]
+    distanceList)) 
+
+
+(defn get-hyperplane-equation
+  "References: https://math.stackexchange.com/questions/82151/find-the-equation-of-the-plane-passing-through-a-point-and-a-vector-orthogonal
+   The return value is Ax + By = dot(mean, eigenvector) = [A, B, -dot(mean,eigenvector)]"
+  [mean eigenvector]
+  (let [dotProd  (- (matrix-proto/vector-dot mean eigenvector))
+        equation (conj (vec eigenvector) dotProd)]
+    equation))
 
 (defn description-length
   [distance-array]
@@ -111,9 +154,9 @@
   (if (or (= length-1 0)
           (= length-2 0))
     0
-    (let [total-length (+ length-1 length-2) ;; 19 
-          probability-1 (/ length-1 total-length) ;; 10/19  -0.926
-          probability-2 (/ length-2 total-length)] ;; 9/19  -1.078  
+    (let [total-length (+ length-1 length-2) 
+          probability-1 (/ length-1 total-length) 
+          probability-2 (/ length-2 total-length)] 
       ;; Formula: -[(total-length) * [(prob-1 * log2(prob-1)) + (prob-2 * log2(prob-2))]]
       (- (* total-length
            (+
@@ -137,12 +180,53 @@
   
   sorted-eigen-vectors))
 
+(defn get-descending-sort-dist
+  "Return a descending sorted list of distances between points to hyperplane"
+  [eigenvector data]
+  (let
+   [;; a. Find the distance of the hyperplane, which goes through data mean, to origin
+    ;; a. Construct the hyperplane equation, that goes through the mean
+    mean (matrix-stats/mean data)
+    hyperplane (get-hyperplane-equation mean eigenvector)
+
+    ;; dist-from-plane-to-origin (get-dist-from-plane-to-origin mean eigenvector)
+
+    ;; b. Compute the list of distances from all points to the cutting plane
+    ;; dist-from-plane-to-points (get-dist-from-plane-to-points dist-from-plane-to-origin data eigenvector)
+    ;; dist-from-plane-to-points-dict (zipmap data dist-from-plane-to-points)
+    dist-from-plane-to-points (get-dist-from-plane-to-points-V2 hyperplane data)
+    dist-from-plane-to-points-dict (zipmap data dist-from-plane-to-points)
+
+
+    ;; c. Sort the points in order of distance from the cutting hyper plane (positive to negative)
+    sorted-dist-from-plane-to-points (vec (sort-by val > dist-from-plane-to-points-dict))]
+
+    ;;;;;-------- VISUALIZATION 
+    ;; a. Initialized figure with 3 subplots
+    (plot/subplots :figsize [15 5])
+    (plot/subplot 1 3 1 :adjustable "box" :aspect 1)
+
+    ;; b. Drawing the 1st subplot 
+    ;; Draw dataset
+    (plot/scatter  (into [] (map first data)) (into [] (map last data)) :c "black")
+    ;; Draw the first point in the sorted-dist-from-plane-to-points
+    (plot/scatter (first (first (first sorted-dist-from-plane-to-points))) (second (first (first sorted-dist-from-plane-to-points))) :c "blue")
+    ;; Draw 2 eigenvectors going through the mean point
+    (plot/quiver (first mean) (second mean) (first eigenvector) (second eigenvector) :color "pink" :scale 2)
+    (plot/quiver (first mean) (second mean) (second eigenvector) (- (first eigenvector)) :color "blue" :scale 2)
+    ;; Set legen and subplot title
+    (plot/legend ["data" "max distance" "eigenvec1" "eigenvec2"])
+    (plot/title "Data with Eigenvecs")
+
+    sorted-dist-from-plane-to-points))
+
+
 ;; 4. Chopping process
 (defn maybe-divide-cluster-using-DL
   "Divide a cluster into 2 sub-clusters if makes sense
    The input is in form of [[data1, distance1], [data2, distance2], etc.]. 
       Reason: Although we return the actual data set, we need the distances for calculation"
-  [data-and-dist-vector eigenvector]
+  [data-and-dist-vector eigenvector pic-name]
 
   ;; DIVIDING PROCESS
   ;; result-cut-point = [cut-point, dl-arr]
@@ -185,39 +269,42 @@
     ;;;;; SAVE DL DATA
     (write-data-csv [dl-arr] "description-len-chop.csv")
 
-    ;;;;; VISUALIZATION 
-    ;; 1. Visualize the description length 
+    ;;;;;-------- VISUALIZATION 
+    ;; Drawing the 2nd subplot: Visualize the description length 
     (let [data-y (nth result-cut-point 1)
           data-x (range (count data-y))]
-      ;;; set up a subplot gird that has a height of 2 and width of 1
-      ;; set the first subplot as active
-      (plot/subplot 1 3 2)
+      (plot/subplot 1 3 2 :adjustable "box" :aspect 1)
       (plot/plot data-x data-y)
       (plot/title "DL")
       #_(with-show "./src/pcd/picture-output/description-length" (plot/plot data-x data-y)))
 
-    ;; 2. Visualize the cut point (NEED TESTING!)
+    ;; Drawing the 3rd subplot: cut point
+    ;; Visualize the cut point (NEED TESTING!)
     (let [cluster1X (into [] (map first cluster-data-1)) ;; x
           cluster1Y (into [] (map last cluster-data-1))  ;; y
           cluster2X (into [] (map first cluster-data-2))
-          cluster2Y (into [] (map last cluster-data-2))
-       
-          ]
-      ;; set the second subplot as active
-      (plot/subplot 1 3 3)
-      (println "1" cluster-data-1)
-      (println "2" cluster-data-2)
+          cluster2Y (into [] (map last cluster-data-2))]
+    
+      (plot/subplot 1 3 3 :adjustable "box" :aspect 1)
+
+      ;; Draw points in 2 sub-clusters (2 different colors)
       (plot/scatter cluster1X cluster1Y :c "red")
       (plot/scatter cluster2X cluster2Y :c "blue")
-      ;; (plot/quiver (first mean)  (second mean) (second eigenvector) (- (first eigenvector)) :color "red" :scale 2) ;; hyperplane at mean
+
+      ;; Draw the cutpoint, and current eigenvector 
       (plot/quiver (first mean)  (second mean)  (first eigenvector) (second eigenvector) :color "orange" :scale 2)  ;; current eigenvector
-      (plot/quiver (first cluster2X)  (first cluster2Y) (second eigenvector) (- (first eigenvector)) :color "red" :scale 2) ;; cut-point
-      (plot/scatter (first cluster2X) (first cluster2Y) :c "yellow")
-      ;; (plot/scatter (second cluster2X) (second cluster2Y) :c "orange")
+      ;; (println "eigenvec: " (first mean)  (second mean)  (first eigenvector) (second eigenvector) )
+      (plot/scatter (first cluster2X) (first cluster2Y) :c "yellow") ;; cut-point
+
+      ;; Draw the hyperplane going thru the cutpoint
+      (plot/quiver (first cluster2X)  (first cluster2Y) (second eigenvector) (- (first eigenvector)) :color "red" :scale 2) 
+      ;; (println "hyperplane: " (first cluster2X)  (first cluster2Y) (second eigenvector) (- (first eigenvector)))
+      
+      ;; Set legend and title
       (plot/legend ["first cluster" "second cluster" "eigenvec" "hyperplane"])
 
       (plot/title "Cut point")
-      (plot/savefig "./src/pcd/picture-output/TEST" :bbox_inches "tight"))
+      (plot/savefig (str "./src/pcd/picture-output/" pic-name) :bbox_inches "tight"))
 
     ;;;;; RETRUN DATA
     (if (= cut-point 0)
@@ -227,34 +314,15 @@
       ;; else, there is a cut at result-cut-point, return 2 clusters of data
       [cluster-data-1 cluster-data-2])))
 
-(defn get-descending-sort-dist
-  "Return a descending sorted list of distances between points to hyperplane"
-  [eigenvector data]
-  (let
-   [;; a. Find the distance of the hyperplane, which goes through data mean, to origin
-    mean (matrix-stats/mean data)
-    dist-from-plane-to-origin (get-dist-from-plane-to-origin mean eigenvector)
-
-    ;; b. Compute the list of distances from all points to the cutting plane
-    dist-from-plane-to-points (get-dist-from-plane-to-points dist-from-plane-to-origin data eigenvector)
-    dist-from-plane-to-points-dict (zipmap data dist-from-plane-to-points)
-
-    ;; c. Sort the points in order of distance from the cutting hyper plane (positive to negative)
-    sorted-dist-from-plane-to-points (vec (sort-by val > dist-from-plane-to-points-dict))]
-
-    (plot/subplot 1 3 1)
-    (plot/scatter  (into [] (map first data)) (into [] (map last data)) :c "orange")
-    (plot/quiver (first mean) (second mean) (first eigenvector) (second eigenvector) :color "blue" :scale 3)
-    (plot/title "Data with Eigenvecs")
-    
-    sorted-dist-from-plane-to-points))
 
 (defn chop-cluster
   "find subclusters, given an array of sorted eigenvectors and a dataset"
   [data]
     ;; 2. Try to chop each sub-cluster inside the unchopped-clusters
     (loop [unchopped-clusters [data] ;; All clusters in this array still need to be processed  
-           final-chopped-clusters []];; All clusters in this array are in their best shape and cannot be chopped down anymore
+           final-chopped-clusters []
+           cut-time 0
+           pic-name (str "test-" cut-time)];; All clusters in this array are in their best shape and cannot be chopped down anymore
       
       ;; Debugging println
       (println "")
@@ -287,14 +355,10 @@
 
                                      ;; else, try to chop
                                      (let [curr-eivector (nth sorted-eigen-vectors idx-eigvec)
-                                           hyperplane [(second curr-eivector) (- (first curr-eivector))]
-                                          ;; the sorted distances from points to the hyperplane
-                                           ;; We are using the curr-eivector, not the hyperplane
-                                           ;; ISSUE!
                                            sorted-dist (get-descending-sort-dist curr-eivector curr-cluster)
                                           ;; sub-curr-clusters should be an array of either 1 or 2 clusters. No more or less        
-                                           sub-curr-clusters (maybe-divide-cluster-using-DL sorted-dist curr-eivector)]
-
+                                           sub-curr-clusters (maybe-divide-cluster-using-DL sorted-dist curr-eivector pic-name)]
+                                       (println "eigenvectors:" sorted-eigen-vectors)
                                        (println "trying to chop using: " curr-eivector)
                                        (recur (inc idx-eigvec)
                                               (if (== (count sub-curr-clusters) 1) false true)
@@ -303,13 +367,18 @@
               is-chopped (if (== (count chopped-clusters) 2) true false)]
         
           (println "chopped: " is-chopped)
-          #_(if is-chopped
+         
+          (if is-chopped
             ;; there is a chopped: (1) remove the processed cluster, (2) add the 2 sub clusters to the unchopped-clusters
             (recur (into (drop 1 unchopped-clusters) chopped-clusters)
-                   final-chopped-clusters)
+                   final-chopped-clusters
+                   (inc cut-time)
+                   (str "test-" (inc cut-time)))
             ;; all set, no more chop: (1) remove the processed cluster, (2) add that removed cluster to final-chopped-clusters
             (recur (drop 1 unchopped-clusters)
-                   (into final-chopped-clusters chopped-clusters)))))))
+                   (into final-chopped-clusters chopped-clusters)
+                   (inc cut-time)
+                   (str "test-" (inc cut-time))))))))
             
 ;; 5. Merging process
 (defn mahalanobis-distance
@@ -320,11 +389,6 @@
                 (matrix/sub point mean)
                 invcovar
                 (matrix/transpose (matrix/sub point mean)))))
-
-(defn euclidean-distance
-  [point1 point2]
-  (Math/sqrt
-   (reduce + (map #(Math/pow (- %1 %2) 2) point1 point2))))
 
 (defn merge-2-clusters-using-DL
   "Return true if we should merge 2 clusters. False otherwise."
