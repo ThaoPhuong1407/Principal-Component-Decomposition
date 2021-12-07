@@ -27,12 +27,12 @@ full_data = pd.read_csv('../Finding/output_data/original.csv')
 full_data = full_data.iloc[:, [0, 1]].values
 
 # 2. Chop
-chop_data = pd.read_csv('../Finding/output_data/chop.csv')
+chop_data = pd.read_csv('../Finding/output_data/chop-old.csv')
 # Convert data type string to int
 for index, row in chop_data.iterrows():
     if (row['x'] != 'x'):
         row['x'] = float(row['x'])
-        row['y'] = float(row['y'])      
+        row['y'] = float(row['y'])       
 chop_data = chop_data.iloc[:, [0, 1]].values
 
 # 3. Merge
@@ -82,7 +82,7 @@ for i in range(len(chop_arr)):
     
 chop_plot.scatter(chop_data[start:, 0], chop_data[start:,1], s = 30, c=color)
 
-	
+plt.show()
 
 
 	

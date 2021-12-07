@@ -570,12 +570,12 @@
 ;;; form of a list (norm n) being the equation of the hyperplane "r.norm=n".
 ;;; The point is a row matrix.
 
-(define pointDistanceFromHyperplane
-  (lambda (point hyperplane)
-    (destructuringBind (norm n) hyperplane
-      (let ((dist n))
-        (dotimes (i (matrixGetN norm) dist)
-          (set! dist (- dist (* (matrixRef point i 0) (matrixRef norm i 0)))))))))
+;;; (define pointDistanceFromHyperplane
+;;;  (lambda (point hyperplane)
+;;;    (destructuringBind (norm n) hyperplane
+;;;      (let ((dist n))
+;;;        (dotimes (i (matrixGetN norm) dist)
+;;;          (set! dist (- dist (* (matrixRef point i 0) (matrixRef norm i 0)))))))))
 
 ;;; Compute the distance of a point from a hyperplane.  The hyperplane is in the
 ;;; form of a list (norm n) being the equation of the hyperplane "r.norm=n".
@@ -761,7 +761,7 @@
            ;(format "Best=~s Bestindex=~a~%" best bestindex)
            (if (and (>= bestindex 0) (< bestindex (- n 1)))
                (set! result (splitAt data n objs order bestindex eigs eignum plot?)))
-           result)))))
+           result))))) [[data, data], [data, data]]
 
 ;;; Check whether merging two populations will result in reduced entropy.
 ;;; If merging reduces entropy the resulting merged cluster is returned,
@@ -913,8 +913,9 @@
 (define categorize
   (lambda (data objects iterations plot?)
     (let* ((numpoints (matrixGetM (car data))) ; number of points from first dim.
-           (categories (list (list numpoints data objects))) ; data divided into categories
-           (categorized ()))
+            ;; NEW: starting point, should be empty at the end
+           (categories (list (list numpoints data objects))) ; data divided into categories 
+           (categorized ())) 
       ;; Principal Component cluster division
       (do ((it 0 (+ it 1)))
           ((or (>= it iterations) (null? categories))
@@ -975,10 +976,10 @@
                                (return #f))))))))))
 							   
           (let* ((biggestset (car categories))
-                 (setsize (car biggestset))
-                 (set (cadr biggestset))
+                 (setsize (car biggestset)) # num of points
+                 (set (cadr biggestset))  # points
                  (setobj (caddr biggestset)))
-            (set! categories (cdr categories))
+            (set! categories (cdr categories)) # remove 1st from current array
             (let* ((mv (meanAndCovariance set))
                    (eigs (computeSortedEigenvectorsFromCovarianceMatrix (cadr mv))))
               (let ((split (maybeDividePopulation set setsize setobj mv eigs numpoints plot?)))

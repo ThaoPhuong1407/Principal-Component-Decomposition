@@ -128,7 +128,6 @@
                                   (conj distances distance)))))]
     distanceList)) 
 
-
 (defn get-hyperplane-equation
   "References: https://math.stackexchange.com/questions/82151/find-the-equation-of-the-plane-passing-through-a-point-and-a-vector-orthogonal
    The return value is Ax + By = dot(mean, eigenvector) = [A, B, -dot(mean,eigenvector)]"
@@ -167,8 +166,8 @@
   [data]
   (let [
         ;; 1. Find eigenvalues and eigenvectors using SVD
-        ;; cov-matrix (in-stats/covariance data)
-        svd (matrix-linear/svd data)
+        cov-matrix (in-stats/covariance data)
+        svd (matrix-linear/svd cov-matrix) ;; 2x2
         eigen-values (vec (get svd :S))
         eigen-vectors-T (vec (get svd :V*))
 
@@ -177,7 +176,10 @@
         sorted-eigen-val (sort-by last > assign-idx)
         sorted-idx (map #(first %) sorted-eigen-val)
         sorted-eigen-vectors (map #(get eigen-vectors-T %) sorted-idx)]
-  
+    (println "original eigenvec" eigen-vectors-T )
+    (println "original eigenvalue" eigen-values )
+    (println "sorted eigenvect" sorted-eigen-vectors )
+    
   sorted-eigen-vectors))
 
 (defn get-descending-sort-dist
@@ -203,8 +205,8 @@
 
     ;;;;;-------- VISUALIZATION 
     ;; a. Initialized figure with 3 subplots
-    (plot/subplots :figsize [15 5])
-    (plot/subplot 1 3 1 :adjustable "box" :aspect 1)
+    (plot/subplots :figsize [25 5])
+    (plot/subplot 1 5 1 :adjustable "box" :aspect 1)
 
     ;; b. Drawing the 1st subplot 
     ;; Draw dataset
@@ -215,7 +217,7 @@
     (plot/quiver (first mean) (second mean) (first eigenvector) (second eigenvector) :color "pink" :scale 2)
     (plot/quiver (first mean) (second mean) (second eigenvector) (- (first eigenvector)) :color "blue" :scale 2)
     ;; Set legen and subplot title
-    (plot/legend ["data" "max distance" "eigenvec1" "eigenvec2"])
+    (plot/legend ["data" "max distance" "current eigenvec" "hyperplane"])
     (plot/title "Data with Eigenvecs")
 
     sorted-dist-from-plane-to-points))
@@ -248,7 +250,7 @@
                                    data-and-dist-2 (conj temp2 curr-item)
                                    dist-1 (into [] (map last data-and-dist-1))
                                    dist-2 (into [] (map last data-and-dist-2))
-                                   new-dl (+ (cluster-assignment-cost (count dist-1) (count dist-2)) (description-length dist-1) (description-length dist-2))
+                                   new-dl (+ #_(cluster-assignment-cost (count dist-1) (count dist-2)) (description-length dist-1) (description-length dist-2))
                                    cut-point-temp (if (< new-dl minDL) (+ 1 index) cut-point)]
                               ;;  (println minDL new-dl)
                                (recur data-and-dist-1
@@ -273,7 +275,7 @@
     ;; Drawing the 2nd subplot: Visualize the description length 
     (let [data-y (nth result-cut-point 1)
           data-x (range (count data-y))]
-      (plot/subplot 1 3 2 :adjustable "box" :aspect 1)
+      (plot/subplot 1 5 2 :adjustable "box" :aspect 1)
       (plot/plot data-x data-y)
       (plot/title "DL")
       #_(with-show "./src/pcd/picture-output/description-length" (plot/plot data-x data-y)))
@@ -285,7 +287,7 @@
           cluster2X (into [] (map first cluster-data-2))
           cluster2Y (into [] (map last cluster-data-2))]
     
-      (plot/subplot 1 3 3 :adjustable "box" :aspect 1)
+      (plot/subplot 1 5 3 :adjustable "box" :aspect 1)
 
       ;; Draw points in 2 sub-clusters (2 different colors)
       (plot/scatter cluster1X cluster1Y :c "red")
@@ -301,7 +303,7 @@
       ;; (println "hyperplane: " (first cluster2X)  (first cluster2Y) (second eigenvector) (- (first eigenvector)))
       
       ;; Set legend and title
-      (plot/legend ["first cluster" "second cluster" "eigenvec" "hyperplane"])
+      (plot/legend ["first cluster" "second cluster" "eigenvec" "cutpoint"  "hyperplane"])
 
       (plot/title "Cut point")
       (plot/savefig (str "./src/pcd/picture-output/" pic-name) :bbox_inches "tight"))
@@ -339,7 +341,7 @@
         (let [curr-cluster (first unchopped-clusters)
               ;; Get the sorted eigenvectors for the current cluster
               sorted-eigen-vectors (get-sorted-eigen-vectors curr-cluster)
-
+            
               ;; for each eigen-vector, try to chop the curr-cluster. if chopped, break
               chopped-clusters   (loop
                                   [idx-eigvec   0
@@ -347,7 +349,7 @@
                                    after-chopped-clusters []]
 
                                    ;; Loop break-out condition
-                                   (if (or (>= idx-eigvec (- (count sorted-eigen-vectors) 1))
+                                   (if (or (>= idx-eigvec (count sorted-eigen-vectors))
                                            (= chopped true))
 
                                      ;; if done, return the after-chopped-clusters
@@ -358,6 +360,7 @@
                                            sorted-dist (get-descending-sort-dist curr-eivector curr-cluster)
                                           ;; sub-curr-clusters should be an array of either 1 or 2 clusters. No more or less        
                                            sub-curr-clusters (maybe-divide-cluster-using-DL sorted-dist curr-eivector pic-name)]
+                                      ;;  (println "current-data:" curr-cluster)
                                        (println "eigenvectors:" sorted-eigen-vectors)
                                        (println "trying to chop using: " curr-eivector)
                                        (recur (inc idx-eigvec)
@@ -365,7 +368,7 @@
                                               sub-curr-clusters)))) ;; chopped
 
               is-chopped (if (== (count chopped-clusters) 2) true false)]
-        
+                  
           (println "chopped: " is-chopped)
          
           (if is-chopped
@@ -399,7 +402,9 @@
         merged-cluster (vec (concat cluster1 cluster2)) ;; merge 2 clusters
 
         ;; get the sorted eigenvectors
-        svd (matrix-linear/svd merged-cluster)
+         ;; 1. Find eigenvalues and eigenvectors using SVD
+        cov-matrix (in-stats/covariance merged-cluster)
+        svd (matrix-linear/svd cov-matrix)
         eigen-values (vec (get svd :S))
         eigen-vectors-T (vec (get svd :V*))
         with-idx  (map-indexed vector eigen-values)
@@ -412,10 +417,22 @@
       return-val false]
       (if (< eigen-index (count eigen-vectors-T))
         (let [curr-eigenvector (nth sorted-eigen-vectors eigen-index)
-              dist-from-plane-to-origin (get-dist-from-plane-to-origin mean curr-eigenvector)
-              dist-from-plane-to-points-c1 (get-dist-from-plane-to-points dist-from-plane-to-origin cluster1 curr-eigenvector)
-              dist-from-plane-to-points-c2 (get-dist-from-plane-to-points dist-from-plane-to-origin cluster2 curr-eigenvector)
-              dist-from-plane-to-points-merged (get-dist-from-plane-to-points dist-from-plane-to-origin merged-cluster curr-eigenvector)
+              ;; OLD way to calculate distances
+              ;; dist-from-plane-to-origin (get-dist-from-plane-to-origin mean curr-eigenvector)
+              ;; dist-from-plane-to-points-c1 (get-dist-from-plane-to-points dist-from-plane-to-origin cluster1 curr-eigenvector)
+              ;; dist-from-plane-to-points-c2 (get-dist-from-plane-to-points dist-from-plane-to-origin cluster2 curr-eigenvector)
+              ;; dist-from-plane-to-points-merged (get-dist-from-plane-to-points dist-from-plane-to-origin merged-cluster curr-eigenvector)
+              mean1 (matrix-stats/mean cluster1)
+              hyperplane1 (get-hyperplane-equation mean1 curr-eigenvector)
+              dist-from-plane-to-points-c1 (get-dist-from-plane-to-points-V2 hyperplane1 cluster1)
+
+              mean2 (matrix-stats/mean cluster2)
+              hyperplane2 (get-hyperplane-equation mean2 curr-eigenvector)
+              dist-from-plane-to-points-c2 (get-dist-from-plane-to-points-V2 hyperplane2 cluster2)
+
+              hyperplane3 (get-hyperplane-equation mean curr-eigenvector)
+              dist-from-plane-to-points-merged (get-dist-from-plane-to-points-V2 hyperplane3 merged-cluster)
+
               dl-1 (description-length dist-from-plane-to-points-c1)
               dl-2 (description-length dist-from-plane-to-points-c2)
               dl-1plus2 (+ dl-1 dl-2 cac) ;; Note: If we add cac, we will just merge back everything because dl-1plus2 is always better than dl-merge
@@ -521,11 +538,48 @@
         ;; 4. Merge the clusters from (3)
         merged-clusters (merge-clusters chopped-clusters)]
 
+
+    ;; b. Drawing the 1st subplot 
+    ;; Draw dataset
+
+    ;; (def colors ["orange" "red" "yellow" "black" "pink"])
+    ;; (loop
+    ;;  [i 0]
+    ;;   (if (< i (count chopped-clusters))
+    ;;     ;; draw & recur
+
+    ;;     ;; 
+    ;;     ))
+    (plot/subplot 1 5 4 :adjustable "box" :aspect 1)
+    (plot/scatter  (into [] (map first (nth chopped-clusters 0))) (into [] (map last (nth chopped-clusters 0))) :c "orange")
+    (plot/scatter  (into [] (map first (nth chopped-clusters 1))) (into [] (map last (nth chopped-clusters 1))) :c "red")
+    (plot/scatter  (into [] (map first (nth chopped-clusters 2))) (into [] (map last (nth chopped-clusters 2))) :c "black")
+    (plot/scatter  (into [] (map first (nth chopped-clusters 3))) (into [] (map last (nth chopped-clusters 3))) :c "yellow")
+    (plot/scatter  (into [] (map first (nth chopped-clusters 4))) (into [] (map last (nth chopped-clusters 4))) :c "pink")
+    (plot/scatter  (into [] (map first (nth chopped-clusters 5))) (into [] (map last (nth chopped-clusters 5))) :c "blue")
+    (plot/scatter  (into [] (map first (nth chopped-clusters 6))) (into [] (map last (nth chopped-clusters 6))) :c "rosybrown")
+    (plot/scatter  (into [] (map first (nth chopped-clusters 7))) (into [] (map last (nth chopped-clusters 7))) :c "darkred")
+    (plot/scatter  (into [] (map first (nth chopped-clusters 8))) (into [] (map last (nth chopped-clusters 8))) :c "gold")
+    (plot/scatter  (into [] (map first (nth chopped-clusters 9))) (into [] (map last (nth chopped-clusters 9))) :c "azure")
+    (plot/scatter  (into [] (map first (nth chopped-clusters 10))) (into [] (map last (nth chopped-clusters 10))) :c "indigo")
+    (plot/scatter  (into [] (map first (nth chopped-clusters 11))) (into [] (map last (nth chopped-clusters 11))) :c "blueviolet")
+    (plot/scatter  (into [] (map first (nth chopped-clusters 12))) (into [] (map last (nth chopped-clusters 12))) :c "seagreen")
+    (plot/scatter  (into [] (map first (nth chopped-clusters 13))) (into [] (map last (nth chopped-clusters 13))) :c "lime")
+    (plot/scatter  (into [] (map first (nth chopped-clusters 14))) (into [] (map last (nth chopped-clusters 14))) :c "royalblue")
+    (plot/scatter  (into [] (map first (nth chopped-clusters 15))) (into [] (map last (nth chopped-clusters 15))) :c "slategrey")
+    #_(plot/scatter  (into [] (map first (nth chopped-clusters 0))) (into [] (map last (nth chopped-clusters 16))) :c "crimson")
+    (plot/savefig "./src/pcd/picture-output/FinalCut" :bbox_inches "tight")
+
+
+    (plot/subplot 1 5 5 :adjustable "box" :aspect 1)
+    ;; (plot/scatter  (into [] (map first (nth merged-clusters 0))) (into [] (map last (nth merged-clusters 0))) :c "orange")
+    ;; (plot/scatter  (into [] (map first (nth merged-clusters 1))) (into [] (map last (nth merged-clusters 1))) :c "red")
+    ;; (plot/scatter  (into [] (map first (nth merged-clusters 2))) (into [] (map last (nth merged-clusters 2))) :c "black")
+    (plot/savefig "./src/pcd/picture-output/FinalMerge" :bbox_inches "tight")  
     ;; Output the data for visualization or futher processing
     (map #(write-data-csv (into [["x", "y"]] %) "chop.csv") chopped-clusters)   ;; Don't know why the data in this section isn't stored (as if the code wasn't called)
-    (map #(write-data-csv (into [["x", "y"]] %) "merge.csv") merged-clusters)
-    (write-data-csv (into [["x", "y"]] ds) "original.csv")))
-
+    #_(map #(write-data-csv (into [["x", "y"]] %) "merge.csv") merged-clusters)
+    #_(write-data-csv (into [["x", "y"]] ds) "original.csv")))
 
 
 

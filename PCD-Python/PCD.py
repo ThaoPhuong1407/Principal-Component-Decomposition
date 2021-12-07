@@ -220,6 +220,7 @@ def main():
     # eigenvalues, eigenvectors = LA.eig(cov_matrix) 
     U, s, VT = LA.svd(data) #SVD version
     eigenvalues, eigenvectors = s, VT.T 
+    print(eigenvectors)
     
     # 4. Sort eigenvectors in the descending order of eigenvalues.
     sorted_eig_index = np.argsort(eigenvalues)[::-1] # [::-1] = list[start : stop : step] = reverse a list
@@ -227,27 +228,33 @@ def main():
     sorted_eigenvectors_T = sorted_eigenvectors.T
     
     sorted_eigenvectors_T = [[0.7709129685111153,0.636940495636273], [0.636940495636273,-0.7709129685111153]]
+    dataset = [53.563714462663874,70.43148917119552,68.45589309803958,65.31650471667976,62.659103675706575,62.000271628797925,59.99459537066508,60.79492488238993,61.47482295051258,60.364343912099855,61.4824314898444,62.43728216958551,68.45694850718931,53.563714462663874]
+    dl_plot.plot(list(range(len(dataset))), dataset)
     
     # Plotting the eigenvectors  
-    origin = [0, 0]
-    data_plot.plot(*data_mean, 'o', label='mean')
-    for i in range(0, len(sorted_eigenvectors_T)):
-        color = (random.random(), random.random(), random.random())       
-        data_plot.quiver(*origin, *(sorted_eigenvectors_T[i]), color=color, 
-                         label='eigenvector {}'.format(i), scale=1)
-    
-    # 5. Chopping process
-    clusters = chop(data, sorted_eigenvectors_T, clusters_plot, dl_plot, True)
-    final_clusters = merge_cluster_DL(clusters)
+    #    origin = [0, 0]
+    #    data_plot.plot(*data_mean, 'o', label='mean')
+    #    for i in range(0, len(sorted_eigenvectors_T)):
+    #        color = (random.random(), random.random(), random.random())       
+    #        data_plot.quiver(*origin, *(sorted_eigenvectors_T[i]), color=color, 
+    #                         label='eigenvector {}'.format(i), scale=1)
 
-    print(len(final_clusters))
+	
+	
+	#dl_plot.plot(list(range(len(datatest))), datatest)
+		
+    # 5. Chopping process
+#    clusters = chop(data, sorted_eigenvectors_T, clusters_plot, dl_plot, True)
+#    final_clusters = merge_cluster_DL(clusters)
+
+#    print(len(final_clusters))
     
-    show_cluster = final_clusters
-    for i in range(len(show_cluster)):
-        color = np.array([random.random(), random.random(), random.random()])
-        color=color.reshape(1,-1)
-        cluster = np.array(show_cluster[i])
-        clusters_plot.scatter(cluster[:,0], cluster[:,1], s = 10, c=color)
+#    show_cluster = final_clusters
+#    for i in range(len(show_cluster)):
+#        color = np.array([random.random(), random.random(), random.random()])
+#        color=color.reshape(1,-1)
+#        cluster = np.array(show_cluster[i])
+#        clusters_plot.scatter(cluster[:,0], cluster[:,1], s = 10, c=color)
 
     data_plot.legend()
     
